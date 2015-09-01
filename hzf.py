@@ -16,11 +16,11 @@ class WithAttrs(object):
     @property
     def attrs(self):
         """ file-backed attributes dict """
-        return json.loads(open(os.path.join(self.fn, self.path, self._ATTRS_FNAME)).read())
+        return json.loads(open(os.path.join(self.os_path, self.path.lstrip("/"), self._ATTRS_FNAME)).read())
 
     @attrs.setter
     def attrs(self, value):
-        open(os.path.join(self.fn, self.path, self._ATTRS_FNAME), 'w').write(json.dumps(value))
+        open(os.path.join(self.os_path, self.path.lstrip("/"), self._ATTRS_FNAME), 'w').write(json.dumps(value))
 
     @attrs.deleter
     def attrs(self):
@@ -34,7 +34,7 @@ class WithFields(object):
     @property
     def fields(self):
         """ file-backed attributes dict """
-        fpath = os.path.join(self.fn, self.path, self._FIELDS_FNAME)
+        fpath = os.path.join(self.os_path, self.path.lstrip("/"), self._FIELDS_FNAME)
         fields_out = {}
         if os.path.exists(fpath):
             fields_out = json.loads(open(fpath, 'r').read())
@@ -42,7 +42,7 @@ class WithFields(object):
 
     @fields.setter
     def fields(self, value):
-        open(os.path.join(self.fn, self.path, self._FIELDS_FNAME), 'w').write(json.dumps(value))
+        open(os.path.join(self.os_path, self.path.lstrip("/"), self._FIELDS_FNAME), 'w').write(json.dumps(value))
 
     @fields.deleter
     def fields(self):
@@ -50,22 +50,71 @@ class WithFields(object):
         raise NotImplementedError
         
 
-class File(WithAttrs,WithFields):
-    """ mimics the hdf5 File object """
-    def __init__(self, filename, mode, timestamp=None, creator=None, compression=zipfile.ZIP_DEFLATED, rootpath=None, attrs={}, **kw):
+class Node(WithAttrs,WithFields):
+    def __init__(self, parent_node=None, path="/", nxclass=None, attrs={}):
+        self.parent_node = parent_node
+        self.root_node = self if parent_node is None else parent_node.root_node
+        if path.startswith("/"):
+            # absolute path
+            self.path = path
+        else: 
+            # relative
+            self.path = os.path.join(parent_node.path, path)
+            
+    @property
+    def groups(self):
+        groupnames = [x for x in os.listdir(os.path.join(self.os_path, self.path.lstrip("/"))) if os.path.isdir(os.path.join(self.os_path, self.path.lstrip("/"), x))]
+        return dict([(gn, Group(self, gn)) for gn in groupnames])
+    
+    def __repr__(self):
+        return "<HDF5 ZIP group \"" + self.path + "\">"
+    
+    def __getitem__(self, path):
+        """ get an item based only on its path.
+        Can assume that next-to-last segment is a group (dataset is lowest level)
+        """
+        if path.startswith("/"):
+            # absolute path
+            full_path = path
+        else: 
+            # relative
+            full_path = os.path.join(self.path, path)
+
+        os_path = os.path.join(self.os_path, full_path.lstrip("/"))
+        print os_path, full_path
+        if os.path.isdir(os_path):
+            return Group(self, path)
+        else:
+            field_name = os.path.basename(full_path)
+            group_path = os.path.dirname(full_path)
+            os_path = os.path.join(self.os_path, group_path)
+            if os.path.isdir(os_path):
+                g = Group(self, group_path)
+                return g.fields[field_name]        
+    
+    def add_field(self, path, **kw):
+        Dataset(self, path, **kw)
+        
+    def add_group(self, path, nxclass, attrs={}):
+        Group(self, path, nxclass, attrs)
+
+class File(Node):
+    def __init__(self, filename, mode, timestamp=None, creator=None, compression=zipfile.ZIP_DEFLATED, attrs={}, **kw):
+        Node.__init__(self, parent_node=None, path="/")
         fn = tempfile.mkdtemp()
         # os.close(fd) # to be opened by name
-        self.fn = fn
+        self.os_path = fn
         self.filename = filename
         self.mode = mode
         self.compression = compression
-        if rootpath is None:
-            rootpath = filename.split('.')[0]
-        self.path = rootpath
-        preexisting = os.path.exists(os.path.join(self.fn, self.path))
+        file_exists = os.path.exists(filename)
+        if file_exists and (mode == "a" or mode == "r"):
+             zipfile.ZipFile(filename).extractall(self.os_path)
         
-        if (mode == "a" and not preexisting) or mode == "w":
-            os.mkdir(os.path.join(self.fn, self.path))
+        preexisting = os.path.exists(os.path.join(self.os_path, self.path.lstrip("/")))
+        
+        if mode == "a" or mode == "w":
+            #os.mkdir(os.path.join(self.os_path, self.path.lstrip("/")))
             if timestamp is None:
                 timestr = iso8601.now()
             else:
@@ -80,68 +129,36 @@ class File(WithAttrs,WithFields):
             attrs['file_time'] = timestr
             attrs['NeXus_version'] = __version__
             if creator is not None:
-                attrs['creator'] = creator
+                attrs['creator'] = creator       
         self.attrs = attrs
-            
-    def __del__(self):
+        
+    def close(self):
         self.writezip()
-    
-    def __getitem__(self, path):
-        """ get an item based only on its path.
-        Can assume that next-to-last segment is a group (dataset is lowest level)
-        """
-        basename = os.path.dirname(path)
-        full_path = os.path.join(self.fn, self.path, path)
-        if os.path.isdir(full_path):
-            return Group(self, full_path)
-        else:
-            field_name = os.path.basename(full_path)
-            full_path = os.path.dirname(full_path)
-            if os.path.isdir(full_path):
-                g = Group(self, full_path)
-                return g.fields[field_name]
+        shutil.rmtree(self.os_path)
         
-    @property
-    def groups(self):
-        groupnames = [x for x in os.listdir(os.path.join(self.fn, self.path)) if os.path.isdir(os.path.join(self.fn, self.path, x))]
-        return dict([(gn, Group(self, gn)) for gn in groupnames])
-        #return [x for x in os.listdir(os.path.join(self.fn, self.path)) if os.path.isdir(os.path.join(self.fn, self.path, x))]
-    
-    def add_field(self, path, **kw):
-        Field(self, path, **kw)
-        
-    def add_group(self, path, nxclass, attrs={}):
-        Group(self, nxclass, attrs)
-    
     def writezip(self):
-        #shutil.make_archive(self.filename, 'zip', root_dir=self.fn)
-        make_zipfile(self.filename, os.path.join(self.fn, self.path), self.compression)
+        make_root_zipfile(self.filename, os.path.join(self.os_path, self.path.lstrip("/")), self.compression)
+        
     
-class Group(WithAttrs,WithFields):
+class Group(Node):
     def __init__(self, node, path, nxclass=None, attrs={}):
-        self.path = os.path.join(node.path, path)
-        self.node = node
-        self.fn = node.fn
-        preexisting = os.path.exists(os.path.join(self.fn, self.path))
+        Node.__init__(self, parent_node=node, path=path)
+        if path.startswith("/"):
+            # absolute path
+            self.path = path
+        else: 
+            # relative
+            self.path = os.path.join(node.path, path)
+        
+        self.os_path = node.os_path
+        preexisting = os.path.exists(os.path.join(self.os_path, self.path.lstrip("/")))
         
         if not preexisting:
-            os.mkdir(os.path.join(self.fn, self.path))
+            os.mkdir(os.path.join(self.os_path, self.path.lstrip("/")))
             attrs['NX_class'] = nxclass.encode('UTF-8')
             self.attrs = attrs
-    
-    def __repr__(self):
-        return "<HDF5 ZIP group \"" + self.path + "\">"
-    
-    @property
-    def groups(self):
-        groupnames = [x for x in os.listdir(os.path.join(self.fn, self.path)) if os.path.isdir(os.path.join(self.fn, self.path, x))]
-        return dict([(gn, Group(self, gn)) for gn in groupnames])
-        #return [x for x in os.listdir(os.path.join(self.fn, self.path)) if os.path.isdir(os.path.join(self.fn, self.path, x))]
-        
-    def add_field(self, path, **kw):
-        Field(self, path, **kw)
 
-class Field(object):
+class Dataset(object):
     _formats = {
         'S': '%s',
         'f': '%.8g',
@@ -233,35 +250,50 @@ class Field(object):
         *dataset* : file-backed data object
             Reference to the created dataset.
         """
-    
-        data = kw.pop('data', None)
-        dtype = kw.pop('dtype', None)
-        shape = kw.pop('shape', None)
-        units = kw.pop('units', None)
-        label = kw.pop('label', None)
-        inline = kw.pop('inline', False)
-        binary = kw.pop('binary', False)
-        attrs = kw.pop('attrs', {})
+
+        self.parent_node = node
+        self.root_node = node.root_node
+        self.os_path = node.os_path
+        if path.startswith("/"):
+            # absolute path
+            self.path = path
+        else: 
+            # relative
+            self.path = os.path.join(node.path, path)
         
+        field_name = os.path.basename(self.path)
+        group_path = os.path.dirname(self.path)
+        preexisting = field_name in self.parent_node.fields
+        print "preexisting?", preexisting
+        #json.loads(open(os.path.join(full_path, "fields.json"))))
         
-        self.path = path
-        self.node = node
-        self.fn = node.fn
-        self.inline = inline
-        self.binary = binary
+        if preexisting:
+            pass
+        else:       
+            data = kw.pop('data', [])
+            dtype = kw.pop('dtype', None)
+            shape = kw.pop('shape', None)
+            units = kw.pop('units', None)
+            label = kw.pop('label', None)
+            inline = kw.pop('inline', False)
+            binary = kw.pop('binary', False)
+            attrs = kw.pop('attrs', {})
+      
+            self.inline = inline
+            self.binary = binary
        
-        #os.mkdir(os.path.join(node.fn, self.path))
-        attrs['dtype'] = dtype
-        attrs['units'] = units
-        attrs['label'] = label
-        attrs['shape'] = shape
-        attrs['byteorder'] = sys.byteorder
-        if data is not None:
-            self.set_data(data, attrs)
+            #os.mkdir(os.path.join(node.os_path, self.path))
+            attrs['dtype'] = dtype
+            attrs['units'] = units
+            attrs['label'] = label
+            attrs['shape'] = shape
+            attrs['byteorder'] = sys.byteorder
+            if data is not None:
+                self.set_data(data, attrs)
     
     @property
     def value(self):
-        field = self.node.fields[self.path]
+        field = self.root_node.fields[self.path]
         if self.inline:
             return field['value']
         else:
@@ -281,33 +313,35 @@ class Field(object):
     
     def set_data(self, data, attrs=None):
         if attrs is None:
-            attrs = self.node.fields[self.path]
+            attrs = self.parent_node.fields[self.path]
         if hasattr(data, 'shape'): attrs['shape'] = data.shape
         if hasattr(data, 'dtype'): 
             formatstr = '<' if attrs['byteorder'] == 'little' else '>'
             formatstr += data.dtype.char
-            formatstr += "%d" % (data.dtype.itemsize * 4,)
+            formatstr += "%d" % (data.dtype.itemsize * 8,)
             attrs['format'] = formatstr
+            
         if self.inline:            
             if hasattr(data, 'tolist'): data = data.tolist()
             attrs['value'] = data
         else:
             if self.binary:
-                full_path = os.path.join(self.node.path, self.path + '.bin')
-                open(os.path.join(self.node.fn, full_path), 'w').write(data.tostring())
+                full_path = os.path.join(self.path + '.bin')
+                open(os.path.join(self.os_path, full_path.lstrip("/")), 'w').write(data.tostring())
             else:
-                full_path = os.path.join(self.node.path, self.path + '.dat')
-                numpy.savetxt(os.path.join(self.node.fn, full_path), data, delimiter='\t', fmt=self._formats[data.dtype.kind])
+                full_path = os.path.join(self.path + '.dat')
+                numpy.savetxt(os.path.join(self.os_path, full_path.lstrip("/")), data, delimiter='\t', fmt=self._formats[data.dtype.kind])
             attrs['target'] = full_path
             attrs['dtype'] = data.dtype.name
             attrs['shape'] = data.shape
-        parent_fields = self.node.fields
+        parent_fields = self.parent_node.fields
         parent_fields[self.path] = attrs
-        self.node.fields = parent_fields
-        print self.node.fields
+        self.parent_node.fields = parent_fields
+        print self.parent_node.fields
 
 def make_zipfile(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
     relroot = os.path.abspath(os.path.join(source_dir, os.pardir))
+    print relroot
     with zipfile.ZipFile(output_filename, "w", compression) as zipped:
         for root, dirs, files in os.walk(source_dir):
             # add directory (needed for empty dirs)
@@ -317,5 +351,19 @@ def make_zipfile(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
                 if os.path.isfile(filename): # regular files only
                     arcname = os.path.join(os.path.relpath(root, relroot), file)
                     zipped.write(filename, arcname)
+                    
+def make_root_zipfile(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
+    relroot = os.path.abspath(source_dir)
+    with zipfile.ZipFile(output_filename, "w", compression) as zipped:
+        for root, dirs, files in os.walk(source_dir):
+            # add directory (needed for empty dirs)
+            relpath = os.path.relpath(root, relroot)
+            if not os.path.samefile(root, relroot):
+                zipped.write(root, os.path.relpath(root, relroot))
+            for file in files:
+                filename = os.path.join(root, file)
+                if os.path.isfile(filename): # regular files only
+                    arcname = os.path.join(os.path.relpath(root, relroot), file)
+                    zipped.write(filename, arcname)                    
     
 
