@@ -49,8 +49,29 @@ class WithFields(object):
         """ you can't do this """
         raise NotImplementedError
         
+class WithLinks(object):
+    """ File, Group, etc. inherit from here to get any defined links, 
+    which is backed by links.json in the filesystem when links are present """
+    _LINKS_FNAME = "links.json"
+    @property
+    def links(self):
+        """ file-backed attributes dict """
+        lpath = os.path.join(self.os_path, self.path.lstrip("/"), self._LINKS_FNAME)
+        links_out = {}
+        if os.path.exists(lpath):
+            links_out = json.loads(open(lpath, 'r').read())
+        return links_out
 
-class Node(WithAttrs,WithFields):
+    @links.setter
+    def links(self, value):
+        open(os.path.join(self.os_path, self.path.lstrip("/"), self._LINKS_FNAME), 'w').write(json.dumps(value))
+
+    @links.deleter
+    def links(self):
+        """ you can't do this """
+        raise NotImplementedError
+
+class Node(WithAttrs,WithFields,WithLinks):
     def __init__(self, parent_node=None, path="/", nxclass=None, attrs={}):
         self.parent_node = parent_node
         self.root_node = self if parent_node is None else parent_node.root_node
@@ -63,7 +84,7 @@ class Node(WithAttrs,WithFields):
             
     @property
     def groups(self):
-        groupnames = [x for x in os.listdir(os.path.join(self.os_path, self.path.lstrip("/"))) if os.path.isdir(os.path.join(self.os_path, self.path.lstrip("/"), x))]
+        groupnames = [x for x in os.listdir(os.path.join(self.os_path, self.path.lstrip("/"))) if os.path.isdir(os.path.join(self.os_path, self.path.lstrip("/"), x))] 
         return dict([(gn, Group(self, gn)) for gn in groupnames])
     
     def __repr__(self):
@@ -366,4 +387,19 @@ def make_root_zipfile(output_filename, source_dir, compression=zipfile.ZIP_DEFLA
                     arcname = os.path.join(os.path.relpath(root, relroot), file)
                     zipped.write(filename, arcname)                    
     
-
+"""
+if os.path.islink(fullPath):
+                    # http://www.mail-archive.com/python-list@python.org/msg34223.html
+                    zipInfo = zipfile.ZipInfo(archiveRoot)
+                    zipInfo.create_system = 3
+                    # long type of hex val of '0xA1ED0000L',
+                    # say, symlink attr magic...
+                    zipinfo.external_attr = 0644 << 16L # permissions -r-wr--r--
+                    # or zipinfo.external_attr = 0755 << 16L # permissions -rwxr-xr-x
+                    # or zipinfo.external_attr = 0777 << 16L # permissions -rwxrwxrwx
+                    # zipInfo.external_attr = 2716663808L # for 0755 permissions
+                    zipinfo.external_attr |= 0120000 << 16L # symlink file type
+                    zipOut.writestr(zipInfo, os.readlink(fullPath))
+                else:
+                    zipOut.write(fullPath, archiveRoot, zipfile.ZIP_DEFLATED)
+"""                    
