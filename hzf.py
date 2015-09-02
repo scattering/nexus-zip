@@ -158,7 +158,7 @@ class File(Node):
         shutil.rmtree(self.os_path)
         
     def writezip(self):
-        make_root_zipfile(self.filename, os.path.join(self.os_path, self.path.lstrip("/")), self.compression)
+        make_zipfile_withlinks(self.filename, os.path.join(self.os_path, self.path.lstrip("/")), self.compression)
         
     
 class Group(Node):
@@ -360,46 +360,53 @@ class Dataset(object):
         self.parent_node.fields = parent_fields
         print self.parent_node.fields
 
-def make_zipfile(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
-    relroot = os.path.abspath(os.path.join(source_dir, os.pardir))
-    print relroot
-    with zipfile.ZipFile(output_filename, "w", compression) as zipped:
-        for root, dirs, files in os.walk(source_dir):
-            # add directory (needed for empty dirs)
-            zipped.write(root, os.path.relpath(root, relroot))
-            for file in files:
-                filename = os.path.join(root, file)
-                if os.path.isfile(filename): # regular files only
-                    arcname = os.path.join(os.path.relpath(root, relroot), file)
-                    zipped.write(filename, arcname)
-                    
-def make_root_zipfile(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
+def write_item(zipOut, relroot, root, permissions=0755):
+    """ check if a path points to a link, or a file, or a directory,
+    and take appropriate action in the zip archive """
+    # zipinfo.external_attr = 0644 << 16L # permissions -r-wr--r--
+    # zipinfo.external_attr = 0755 << 16L # permissions -rwxr-xr-x
+    # zipinfo.external_attr = 0777 << 16L # permissions -rwxrwxrwx
+    # e.g. zipInfo.external_attr = 2716663808L for 0755 permissions + link type
+    relpath = os.path.relpath(root, relroot)
+    
+    if os.path.islink(root):
+        zipInfo = zipfile.ZipInfo(relpath)
+        zipInfo.create_system = 3
+        # long type of hex val of '0xA1ED0000L',
+        # say, symlink attr magic...
+        zipInfo.external_attr = permissions << 16L       
+        zipInfo.external_attr |= 0120000 << 16L # symlink file type        
+        zipOut.writestr(zipInfo, os.readlink(root))
+        return
+    else:
+        zipOut.write(root, relpath)
+        
+def make_zipfile_withlinks(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
     relroot = os.path.abspath(source_dir)
     with zipfile.ZipFile(output_filename, "w", compression) as zipped:
         for root, dirs, files in os.walk(source_dir):
             # add directory (needed for empty dirs)
-            relpath = os.path.relpath(root, relroot)
-            if not os.path.samefile(root, relroot):
-                zipped.write(root, os.path.relpath(root, relroot))
-            for file in files:
-                filename = os.path.join(root, file)
-                if os.path.isfile(filename): # regular files only
-                    arcname = os.path.join(os.path.relpath(root, relroot), file)
-                    zipped.write(filename, arcname)                    
+            for d in dirs:
+                dirname = os.path.join(root, d)
+                write_item(zipped, relroot, dirname)
+            for f in files:
+                filename = os.path.join(root, f)
+                write_item(zipped, relroot, filename)         
+                            
     
 """
 if os.path.islink(fullPath):
-                    # http://www.mail-archive.com/python-list@python.org/msg34223.html
-                    zipInfo = zipfile.ZipInfo(archiveRoot)
-                    zipInfo.create_system = 3
-                    # long type of hex val of '0xA1ED0000L',
-                    # say, symlink attr magic...
-                    zipinfo.external_attr = 0644 << 16L # permissions -r-wr--r--
-                    # or zipinfo.external_attr = 0755 << 16L # permissions -rwxr-xr-x
-                    # or zipinfo.external_attr = 0777 << 16L # permissions -rwxrwxrwx
-                    # zipInfo.external_attr = 2716663808L # for 0755 permissions
-                    zipinfo.external_attr |= 0120000 << 16L # symlink file type
-                    zipOut.writestr(zipInfo, os.readlink(fullPath))
-                else:
-                    zipOut.write(fullPath, archiveRoot, zipfile.ZIP_DEFLATED)
+    # http://www.mail-archive.com/python-list@python.org/msg34223.html
+    zipInfo = zipfile.ZipInfo(archiveRoot)
+    zipInfo.create_system = 3
+    # long type of hex val of '0xA1ED0000L',
+    # say, symlink attr magic...
+    zipinfo.external_attr = 0644 << 16L # permissions -r-wr--r--
+    # or zipinfo.external_attr = 0755 << 16L # permissions -rwxr-xr-x
+    # or zipinfo.external_attr = 0777 << 16L # permissions -rwxrwxrwx
+    # zipInfo.external_attr = 2716663808L # for 0755 permissions
+    zipinfo.external_attr |= 0120000 << 16L # symlink file type
+    zipOut.writestr(zipInfo, os.readlink(fullPath))
+else:
+    zipOut.write(fullPath, archiveRoot, zipfile.ZIP_DEFLATED)
 """                    
