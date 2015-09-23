@@ -6,7 +6,7 @@ import numpy
 import iso8601
 
 DEFAULT_ENDIANNESS = '<' if (sys.byteorder == 'little') else '>'
-__version__ = "4.2.1"
+__version__ = "0.0.1"
 
 
 class WithAttrs(object):
@@ -88,7 +88,7 @@ class Node(WithAttrs,WithFields,WithLinks):
         return dict([(gn, Group(self, gn)) for gn in groupnames])
     
     def __repr__(self):
-        return "<HDF5 ZIP group \"" + self.path + "\">"
+        return "<HDZIP group \"" + self.path + "\">"
     
     def __getitem__(self, path):
         """ get an item based only on its path.
@@ -102,21 +102,21 @@ class Node(WithAttrs,WithFields,WithLinks):
             full_path = os.path.join(self.path, path)
 
         os_path = os.path.join(self.os_path, full_path.lstrip("/"))
-        print os_path, full_path
+        #print os_path, full_path
         if os.path.isdir(os_path):
             return Group(self, path)
         else:
             field_name = os.path.basename(full_path)
             group_path = os.path.dirname(full_path)
             os_path = os.path.join(self.os_path, group_path.lstrip("/"))
-            print os.path.isdir(os_path), os_path, group_path
+            #print os.path.isdir(os_path), os_path, group_path
             if os.path.isdir(os_path):
                 g = Group(self, group_path)
                 #return g.fields[field_name]        
-                return Field(g, full_path)
+                return FieldFile(g, full_path)
     
     def add_field(self, path, **kw):
-        Field(self, path, **kw)
+        FieldFile(self, path, **kw)
         
     def add_group(self, path, nxclass, attrs={}):
         Group(self, path, nxclass, attrs)
@@ -154,7 +154,10 @@ class File(Node):
             if creator is not None:
                 attrs['creator'] = creator       
         self.attrs = attrs
-        
+    
+    def __repr__(self):
+        return "<HDZIP file \"%s\" (mode %s)>" % (self.filename, self.mode)
+           
     def close(self):
         self.writezip()
         shutil.rmtree(self.os_path)
@@ -374,6 +377,136 @@ def write_item(zipOut, relroot, root, permissions=0755):
         return
     else:
         zipOut.write(root, relpath)
+
+class FieldFile(object):
+    _formats = {
+        'S': '%s',
+        'f': '%.8g',
+        'i': '%d',
+        'u': '%d' }
+        
+    _data_separator = "=== data ===\n"
+        
+    def __init__(self, node, path, **kw):
+        self.parent_node = node
+        self.root_node = node.root_node
+        self.os_path = node.os_path
+        if path.startswith("/"):
+            # absolute path
+            self.path = path
+        else: 
+            # relative
+            self.path = os.path.join(node.path, path)
+        
+        self.name = os.path.basename(self.path)
+        group_path = os.path.dirname(self.path)
+        preexisting = os.path.exists(os.path.join(self.os_path, self.path.lstrip("/")))
+        #print "preexisting?", preexisting
+        
+        if preexisting:
+            pass
+        else:
+            data = kw.pop('data', None)
+            attrs = kw.pop('attrs', {})
+            attrs['units'] = kw.setdefault('units', None)
+            attrs['label'] = kw.setdefault('label', None)
+            attrs['inline'] = kw.setdefault('inline', False)
+            attrs['binary'] = kw.setdefault('binary', False)
+            attrs['byteorder'] = sys.byteorder
+            self.attrs = attrs
+            if data is not None:
+                self.value = data
+                
+    @property
+    def attrs(self):
+        """ file-backed attributes dict """
+        json_text = ""
+        with open(os.path.join(self.os_path, self.path.lstrip("/")), "r") as infile:
+            newline = infile.readline();
+            while newline != self._data_separator and newline != "":
+                json_text += newline
+                newline = infile.readline()
+                
+        return json.loads(json_text)
+
+    @attrs.setter
+    def attrs(self, value):
+        fd_out, fd_out_name = tempfile.mkstemp(dir=self.os_path)
+        fd_in_name = os.path.join(self.os_path, self.path.lstrip("/"))
+        with os.fdopen(fd_out, "w") as outfile:
+            outfile.write(json.dumps(value))
+            outfile.write("\n" + self._data_separator)
+            if os.path.exists(fd_in_name):
+                with open(fd_in_name, "r") as infile:
+                    newline = infile.readline()
+                    while newline != self._data_separator and newline != "":
+                        newline = infile.readline()
+                    # efficiently copy the data from the old file to the new...
+                    shutil.copyfileobj(infile, outfile)
+        # then rename the temporary file to the backing file name...
+        shutil.move(fd_out_name, fd_in_name)
+                
+    @property
+    def value(self):
+        attrs = self.attrs
+        if attrs.get('inline', False) == True:
+            return attrs.get('value', None)
+        else:
+            target = os.path.join(self.os_path, self.path.lstrip("/"))
+            with open(target, 'rb') as infile:
+                # skip the attrs
+                newline = infile.readline()
+                while newline != self._data_separator and newline != "":
+                    newline = infile.readline()
+                if self.attrs.get('binary', False) == True:
+                    d = numpy.fromfile(infile, dtype=attrs['format'])
+                else:
+                    d = numpy.loadtxt(infile, dtype=attrs['dtype'])
+            if 'shape' in attrs:
+                d.reshape(attrs['shape'])
+            return d              
+    
+    @value.setter
+    def value(self, data, attrs=None):
+        if attrs is None:
+            attrs = self.attrs
+        if hasattr(data, 'shape'): attrs['shape'] = data.shape
+        if hasattr(data, 'dtype'): 
+            formatstr = '<' if attrs['byteorder'] == 'little' else '>'
+            formatstr += data.dtype.char
+            formatstr += "%d" % (data.dtype.itemsize * 8,)
+            attrs['format'] = formatstr
+            attrs['dtype'] = data.dtype.name
+            attrs['shape'] = data.shape
+            
+        if attrs.get('inline', False) == True:            
+            if hasattr(data, 'tolist'): data = data.tolist()
+            attrs['value'] = data
+            self.attrs = attrs
+        else:
+            target = os.path.join(self.os_path, self.path.lstrip("/"))
+            with open(target, 'wb') as outfile:
+                outfile.write(json.dumps(attrs))
+                outfile.write("\n" + self._data_separator)
+                if attrs.get('binary', False) == True:
+                    data.tofile(outfile)
+                    #open(target, 'wb').write(data.tostring())
+                else:
+                    numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
+                    
+    def append(self, data, dtype=None):
+        # add to the data...
+        # can only append along the last axis, e.g. if shape is (3,4)
+        # it becomes (3,5), if it is (3,4,5) it becomes (3,4,6)
+        attrs = self.attrs
+        if data.shape != attrs.get('shape', []).slice(None, -1):
+            raise Exception("invalid shape to append")
+        if dtype is None:
+            dtype = attrs['dtype']
+        attrs['shape'][-1] += 1
+        self.attrs = attrs
+        #... unfinished.
+        
         
 def make_zipfile_withlinks(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
     relroot = os.path.abspath(source_dir)
