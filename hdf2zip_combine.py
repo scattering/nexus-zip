@@ -8,7 +8,7 @@ import simplejson
 from collections import OrderedDict
 import copy
 
-DEBUG = True
+DEBUG = False
 
 #file_in = sys.argv[1]
 #file_out = file_in.replace('.nxs', '.nxz') + '.zip'
@@ -24,13 +24,16 @@ def make_metadata(obj, path=''):
         new_path = join_path(path, key)
         newitem = OrderedDict(obj[key].attrs)
         for k,v in newitem.items(): 
-            newitem[k] = numpy.asscalar(v) if isinstance(obj, numpy.generic) else v
+            newitem[k] = numpy.asscalar(v) if isinstance(v, numpy.generic) else v
         if isinstance(obj[key], h5py.Group):
             newitem['members'] = make_metadata(obj[key], new_path)
         else:
             fname = join_path(path, key+'.dat')
             #if max(obj[key].shape) <= 1:
             #    newitem['value'] = obj[key].value.tolist()
+        if DEBUG:
+            print key
+            _ = simplejson.dumps(metadata)
         metadata[key] = newitem
     return metadata
 
