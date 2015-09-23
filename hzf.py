@@ -12,7 +12,7 @@ __version__ = "4.2.1"
 class WithAttrs(object):
     """ File, Group, etc. inherit from here to get access to the attrs 
     property, which is backed by .attrs.json in the filesystem """
-    _ATTRS_FNAME = ".attrs.json"
+    _ATTRS_FNAME = ".attrs"
     @property
     def attrs(self):
         """ file-backed attributes dict """
@@ -30,7 +30,7 @@ class WithAttrs(object):
 class WithFields(object):
     """ File, Group, etc. inherit from here to get optional fields property, 
     which is backed by fields.json in the filesystem when fields are present """
-    _FIELDS_FNAME = "fields.json"
+    _FIELDS_FNAME = ".fields_attrs"
     @property
     def fields(self):
         """ file-backed attributes dict """
@@ -108,13 +108,15 @@ class Node(WithAttrs,WithFields,WithLinks):
         else:
             field_name = os.path.basename(full_path)
             group_path = os.path.dirname(full_path)
-            os_path = os.path.join(self.os_path, group_path)
+            os_path = os.path.join(self.os_path, group_path.lstrip("/"))
+            print os.path.isdir(os_path), os_path, group_path
             if os.path.isdir(os_path):
                 g = Group(self, group_path)
-                return g.fields[field_name]        
+                #return g.fields[field_name]        
+                return Field(g, full_path)
     
     def add_field(self, path, **kw):
-        Dataset(self, path, **kw)
+        Field(self, path, **kw)
         
     def add_group(self, path, nxclass, attrs={}):
         Group(self, path, nxclass, attrs)
@@ -179,7 +181,7 @@ class Group(Node):
             attrs['NX_class'] = nxclass.encode('UTF-8')
             self.attrs = attrs
 
-class Dataset(object):
+class Field(object):
     _formats = {
         'S': '%s',
         'f': '%.8g',
@@ -282,49 +284,41 @@ class Dataset(object):
             # relative
             self.path = os.path.join(node.path, path)
         
-        field_name = os.path.basename(self.path)
+        self.name = os.path.basename(self.path)
         group_path = os.path.dirname(self.path)
-        preexisting = field_name in self.parent_node.fields
+        preexisting = self.name in self.parent_node.fields
         print "preexisting?", preexisting
         #json.loads(open(os.path.join(full_path, "fields.json"))))
         
         if preexisting:
-            pass
+            self.attrs = self.parent_node.fields[self.name]
         else:       
-            data = kw.pop('data', [])
-            dtype = kw.pop('dtype', None)
-            shape = kw.pop('shape', None)
-            units = kw.pop('units', None)
-            label = kw.pop('label', None)
-            inline = kw.pop('inline', False)
-            binary = kw.pop('binary', False)
             attrs = kw.pop('attrs', {})
-      
-            self.inline = inline
-            self.binary = binary
-       
-            #os.mkdir(os.path.join(node.os_path, self.path))
-            attrs['dtype'] = dtype
-            attrs['units'] = units
-            attrs['label'] = label
-            attrs['shape'] = shape
+            attrs['data'] = kw.setdefault('data', {})
+            attrs['dtype'] = kw.setdefault('dtype', None)
+            attrs['units'] = kw.setdefault('units', None)
+            attrs['label'] = kw.setdefault('label', None)
+            attrs['shape'] = kw.setdefault('shape', None)
+            attrs['inline'] = kw.setdefault('inline', False)
+            attrs['binary'] = kw.setdefault('binary', False)
             attrs['byteorder'] = sys.byteorder
             if data is not None:
                 self.set_data(data, attrs)
     
     @property
     def value(self):
-        field = self.root_node.fields[self.path]
-        if self.inline:
+        field = self.parent_node.fields[self.name]
+        if self.attrs.get('inline', False) == True:
             return field['value']
         else:
-            target = field['target']
-            if self.binary:
+            target = os.path.join(self.os_path, (field['target']).lstrip("/"))
+            print target
+            if self.attrs.get('binary', False) == True:
                 datastring = open(target, 'rb').read()
                 d = numpy.fromstring(datastring, dtype=field['format'])
             else:
                 datastring = open(target, 'r').read()
-                d = numpy.loadtxt(target, fmt=field['format'])
+                d = numpy.loadtxt(target, dtype=field['dtype'])
             if 'shape' in field:
                 d.reshape(field['shape'])
             return d
@@ -334,7 +328,7 @@ class Dataset(object):
     
     def set_data(self, data, attrs=None):
         if attrs is None:
-            attrs = self.parent_node.fields[self.path]
+            attrs = self.parent_node.fields[self.name]
         if hasattr(data, 'shape'): attrs['shape'] = data.shape
         if hasattr(data, 'dtype'): 
             formatstr = '<' if attrs['byteorder'] == 'little' else '>'
@@ -342,11 +336,11 @@ class Dataset(object):
             formatstr += "%d" % (data.dtype.itemsize * 8,)
             attrs['format'] = formatstr
             
-        if self.inline:            
+        if self.attrs.get('inline', False) == True:            
             if hasattr(data, 'tolist'): data = data.tolist()
             attrs['value'] = data
         else:
-            if self.binary:
+            if self.attrs.get('binary', False) == True:
                 full_path = os.path.join(self.path + '.bin')
                 open(os.path.join(self.os_path, full_path.lstrip("/")), 'w').write(data.tostring())
             else:
@@ -356,7 +350,7 @@ class Dataset(object):
             attrs['dtype'] = data.dtype.name
             attrs['shape'] = data.shape
         parent_fields = self.parent_node.fields
-        parent_fields[self.path] = attrs
+        parent_fields[self.name] = attrs
         self.parent_node.fields = parent_fields
         print self.parent_node.fields
 
