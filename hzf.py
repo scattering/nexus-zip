@@ -6,8 +6,15 @@ from json_backed_dict import JSONBackedDict
 import numpy
 import iso8601
 
+if bytes != str:
+    def _b(s): return bytes(s, 'utf-8')
+else:
+    def _b(s): return s
+
 DEFAULT_ENDIANNESS = '<' if (sys.byteorder == 'little') else '>'
 __version__ = "0.0.1"
+
+builtin_open = __builtins__['open']
 
 class Node(object):
     _attrs_filename = ".attrs"
@@ -26,6 +33,10 @@ class Node(object):
     def groups(self):
         groupnames = [x for x in os.listdir(os.path.join(self.os_path, self.path.lstrip("/"))) if os.path.isdir(os.path.join(self.os_path, self.path.lstrip("/"), x))] 
         return dict([(gn, Group(self, gn)) for gn in groupnames])
+    
+    @property
+    def name(self):
+        return self.path
     
     def __repr__(self):
         return "<HDZIP group \"" + self.path + "\">"
@@ -225,27 +236,31 @@ class FieldFile(object):
         *dataset* : file-backed data object
             Reference to the created dataset.
         """
-        self.parent_node = node
         self.root_node = node.root_node
         self.os_path = node.os_path
-        if path.startswith("/"):
-            # absolute path
-            self.path = path
-        else: 
-            # relative
-            self.path = os.path.join(node.path, path)
+        if not path.startswith("/"):
+            # relative path:
+            path = os.path.join(node.path, path)
         
+        if 'target' in kw:
+            # then we're a link
+            target_path = kw.pop('target')
+            if not target_path.startswith("/"):
+                target_path = os.path.join(node.path, target_path)
+            self.path = target_path
+            self.orig_path = path
+        else:
+            self.path = self.orig_path = path
+            
         self.attrs_path = self.path + self._attrs_suffix
         self.attrs = JSONBackedDict(os.path.join(self.os_path, self.attrs_path.lstrip("/")))
-        self.name = os.path.basename(self.path)
-        group_path = os.path.dirname(self.path)
+        
         preexisting = os.path.exists(os.path.join(self.os_path, self.path.lstrip("/")))
-        #print "preexisting?", preexisting
         
         if preexisting:
             pass
         else:
-            data = kw.pop('data', None)
+            data = kw.pop('data', numpy.array([]))
             attrs = kw.pop('attrs', {})
             attrs['description'] = kw.setdefault('description', None)
             attrs['dtype'] = kw.setdefault('dtype', None)
@@ -258,18 +273,27 @@ class FieldFile(object):
             self.attrs._write()
             if data is not None:
                 self.value = data
+    
+    @property
+    def name(self):
+        return self.orig_path
+          
+          
+    @property
+    def parent_node(self):
+        return self.root_node[os.path.basename(self.orig_name)]
                 
     @property
     def value(self):
         attrs = self.attrs
         target = os.path.join(self.os_path, self.path.lstrip("/"))
-        with open(target, 'rb') as infile:
+        with builtin_open(target, 'rb') as infile:
             if attrs.get('binary', False) == True:
                 d = numpy.fromfile(infile, dtype=attrs['format'])
             else:
                 d = numpy.loadtxt(infile, dtype=attrs['dtype'])
         if 'shape' in attrs:
-            d.reshape(attrs['shape'])
+            d = d.reshape(attrs['shape'])
         return d              
     
     @value.setter
@@ -280,27 +304,42 @@ class FieldFile(object):
             formatstr = '<' if attrs['byteorder'] == 'little' else '>'
             formatstr += data.dtype.char
             formatstr += "%d" % (data.dtype.itemsize * 8,)
-
+            
+        attrs['format'] = formatstr
         attrs['dtype'] = data.dtype.name
         attrs['shape'] = data.shape
+        self._write_data(data, 'w')
             
+    def _write_data(self, data, mode='w'):
         target = os.path.join(self.os_path, self.path.lstrip("/"))
-
-        if attrs.get('binary', False) == True:
-            with open(target, 'wb') as outfile:
-                attrs['format'] = formatstr
+        if self.attrs.get('binary', False) == True:
+            with builtin_open(target, mode + "b") as outfile:                           
                 data.tofile(outfile)
-                #open(target, 'wb').write(data.tostring())
         else:
-            with open(target, 'w') as outfile:
+            with builtin_open(target, mode) as outfile:       
                 numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
-                    
+                
     def append(self, data, coerce_dtype=True):
         # add to the data...
-        # can only append along the last axis, e.g. if shape is (3,4)
-        # it becomes (3,5), if it is (3,4,5) it becomes (3,4,6)
+        # can only append along the first axis, e.g. if shape is (3,4)
+        # it becomes (4,4), if it is (3,4,5) it becomes (4,4,5)
         attrs = self.attrs
-        if data.shape != attrs.get('shape', []).slice(None, -1):
+        if (list(data.shape) != list(attrs.get('shape', [])[1:])):
+            raise Exception("invalid shape to append")
+        if data.dtype != attrs['dtype']:
+            if coerce_dtype == False:
+                raise Exception("dtypes do not match, and coerce is set to False")
+            else:
+                data = data.astype(attrs['dtype'])
+                                
+        new_shape = list(attrs['shape'])
+        new_shape[0] += 1
+        attrs['shape'] = new_shape
+        self._write_data(data, mode='a')
+        
+    def extend(self, data, coerce_dtype=True):
+        attrs = self.attrs
+        if (list(data.shape[1:]) != list(attrs.get('shape', [])[1:])):
             raise Exception("invalid shape to append")
         if data.dtype != attrs['dtype']:
             if coerce_dtype == False:
@@ -308,18 +347,11 @@ class FieldFile(object):
             else:
                 data = data.astype(attrs['dtype'])
                 
-        attrs['shape'][-1] += 1
+        new_shape = list(attrs['shape'])
+        new_shape[0] += data.shape[0]
+        attrs['shape'] = new_shape
+        self._write_data(data, "a")
         
-        target = os.path.join(self.os_path, self.path.lstrip("/"))
-        if attrs.get('binary', False) == True:
-            with open(target, 'ab+') as outfile:                           
-                data.tofile(outfile)
-                #open(target, 'wb').write(data.tostring())
-        else:
-            with open(target, 'a+') as outfile:       
-                numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
-                
-                
 def write_item(zipOut, relroot, root, permissions=0755):
     """ check if a path points to a link, or a file, or a directory,
     and take appropriate action in the zip archive """
@@ -341,7 +373,30 @@ def write_item(zipOut, relroot, root, permissions=0755):
     else:
         zipOut.write(root, relpath)
 
+
+def link(node, link):
+    if not 'target' in node.attrs:
+        node.attrs["target"] = _b(node.name) # Force string, not unicode
+    try:
+        node.parent[link] = node
+    except:
+        annotate_exception("when linking %s to %s"%(link, node.name))
+        raise
+
+def annotate_exception(msg, exc=None):
+    """
+    Add an annotation to the current exception, which can then be forwarded
+    to the caller using a bare "raise" statement to reraise the annotated
+    exception.
+    """
+    if not exc: exc = sys.exc_info()[1]
         
+    args = exc.args
+    if not args:
+        arg0 = msg
+    else:
+        arg0 = " ".join((args[0],msg))
+    exc.args = tuple([arg0] + list(args[1:]))
         
 def make_zipfile_withlinks(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
     relroot = os.path.abspath(source_dir)
@@ -356,8 +411,16 @@ def make_zipfile_withlinks(output_filename, source_dir, compression=zipfile.ZIP_
                 write_item(zipped, relroot, filename)         
                             
 
+#compatibility with h5nexus:
 group = Group
 field = FieldFile 
+open = File
+
+def extend(node, data):
+    node.extend(data)
+    
+def append(node, data):
+    node.append(data)
     
 """
 if os.path.islink(fullPath):
