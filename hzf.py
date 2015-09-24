@@ -53,7 +53,6 @@ class Node(object):
         """ get an item based only on its path.
         Can assume that next-to-last segment is a group (dataset is lowest level)
         """
-        print path
         if path.startswith("/"):
             # absolute path
             full_path = path
@@ -288,10 +287,10 @@ class FieldFile(object):
         return "<HDZIP field \"%s\" %s \"%s\">" % (self.name, str(self.attrs['shape']), self.attrs['dtype'])
     
     def __getitem__(self, *args):
-        print args
+        return self.value.__getitem__(args)
         
     def __setitem__(self, *args):
-        print args
+        print 'setting: ', args
     
     # promote a few attrs items to python object attributes:
     @property
