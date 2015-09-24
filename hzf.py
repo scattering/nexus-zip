@@ -20,7 +20,6 @@ class Node(object):
     _attrs_filename = ".attrs"
     
     def __init__(self, parent_node=None, path="/", nxclass=None, attrs={}):
-        self.parent_node = parent_node
         self.root_node = self if parent_node is None else parent_node.root_node
         if path.startswith("/"):
             # absolute path
@@ -28,7 +27,11 @@ class Node(object):
         else: 
             # relative
             self.path = os.path.join(parent_node.path, path)
-            
+    
+    @property
+    def parent(self):
+        return self.root_node[os.path.dirname(self.name)]
+               
     @property
     def groups(self):
         groupnames = [x for x in os.listdir(os.path.join(self.os_path, self.path.lstrip("/"))) if os.path.isdir(os.path.join(self.os_path, self.path.lstrip("/"), x))] 
@@ -38,8 +41,12 @@ class Node(object):
     def name(self):
         return self.path
     
-    def __repr__(self):
-        return "<HDZIP group \"" + self.path + "\">"
+    def keys(self):
+        return [x for x in os.listdir(os.path.join(self.os_path, self.path.lstrip("/"))) if not "." in x]
+        
+    def items(self):
+        keys = self.keys()
+        return [(k, self[k]) for k in keys]
     
     def __getitem__(self, path):
         """ get an item based only on its path.
@@ -56,15 +63,14 @@ class Node(object):
         if os.path.exists(os_path):
             #print os_path, full_path
             if os.path.isdir(os_path):
-                return Group(self, path)
+                # it's a group
+                return Group(self, full_path)
+            elif os.path.exists(os_path + ".link"):
+                # it's a link
+                return FieldLink(self, full_path)
             else:
-                field_name = os.path.basename(full_path)
-                group_path = os.path.dirname(full_path)
-                os_path = os.path.join(self.os_path, group_path.lstrip("/"))
-                if os.path.isdir(os_path):
-                    g = Group(self, group_path)
-                    #return g.fields[field_name]        
-                    return FieldFile(g, full_path)
+                # it's a field
+                return FieldFile(self, full_path)
         else:
             # the item doesn't exist
             raise KeyError(path)
@@ -107,7 +113,7 @@ class File(Node):
                 attrs['creator'] = creator       
         self.attrs.update(attrs)
         self.attrs._write()
-    
+
     def __repr__(self):
         return "<HDZIP file \"%s\" (mode %s)>" % (self.filename, self.mode)
            
@@ -141,6 +147,10 @@ class Group(Node):
         self.attrs = JSONBackedDict(os.path.join(self.os_path, self.path.lstrip("/"), self._attrs_filename))
         self.attrs.update(attrs)
         self.attrs._write()
+        
+    def __repr__(self):
+        return "<HDZIP group \"" + self.path + "\">"
+    
 
 class FieldFile(object):
     _formats = {
@@ -241,21 +251,14 @@ class FieldFile(object):
         if not path.startswith("/"):
             # relative path:
             path = os.path.join(node.path, path)
-        
-        if 'target' in kw:
-            # then we're a link
-            target_path = kw.pop('target')
-            if not target_path.startswith("/"):
-                target_path = os.path.join(node.path, target_path)
-            self.path = target_path
-            self.orig_path = path
-        else:
-            self.path = self.orig_path = path
+        self.path = path
+            
+        preexisting = os.path.exists(os.path.join(self.os_path, self.path.lstrip("/")))
             
         self.attrs_path = self.path + self._attrs_suffix
         self.attrs = JSONBackedDict(os.path.join(self.os_path, self.attrs_path.lstrip("/")))
         
-        preexisting = os.path.exists(os.path.join(self.os_path, self.path.lstrip("/")))
+        
         
         if preexisting:
             pass
@@ -274,14 +277,17 @@ class FieldFile(object):
             if data is not None:
                 self.value = data
     
+    def __repr__(self):
+        return "<HDZIP field \"%s\" %s \"%s\">" % (self.name, str(self.attrs['shape']), self.attrs['dtype'])
+    
     @property
     def name(self):
-        return self.orig_path
+        return self.path
           
           
     @property
-    def parent_node(self):
-        return self.root_node[os.path.basename(self.orig_name)]
+    def parent(self):
+        return self.root_node[os.path.dirname(self.name)]
                 
     @property
     def value(self):
@@ -351,7 +357,76 @@ class FieldFile(object):
         new_shape[0] += data.shape[0]
         attrs['shape'] = new_shape
         self._write_data(data, "a")
+
+class FieldLink(FieldFile):
+    def __init__(self, node, path, target_path=None, **kw):
+        if not path.startswith("/"):
+            path = os.path.join(node.path, path)
+        self.orig_path = path
+        self.os_path = node.os_path
+        orig_attrs_path = path + ".link"
+        self.orig_attrs = JSONBackedDict(os.path.join(self.os_path, orig_attrs_path.lstrip("/")))
+                
+        if 'target' in self.orig_attrs:
+            target_path = self.orig_attrs['target']
+        else:
+            self.orig_attrs['target'] = target_path
         
+        FieldFile.__init__(self, node, target_path, **kw)
+        preexisting = os.path.exists(os.path.join(self.os_path, self.orig_path.lstrip("/")))
+        if preexisting:
+            pass
+        else:
+            builtin_open(os.path.join(self.os_path, self.orig_path.lstrip("/")), "w").write("soft link: see .link file for target")
+            
+        self.attrs = StaticDictWrapper(self.attrs, self.orig_attrs)
+      
+    @property
+    def name(self):
+        return self.orig_path
+        
+import collections
+from itertools import chain
+
+class StaticDictWrapper(collections.MutableMapping):
+    def __init__(self, wrapped_dict, static_dict):
+        self.wrapped_dict = wrapped_dict
+        self.static_dict = static_dict
+    
+    def copy(self):
+        output = dict()
+        output.update(self.wrapped_dict)
+        output.update(self.static_dict)
+        return output
+        
+    def __repr__(self):
+        return self.copy().__repr__()
+    
+    def __getitem__(self, key):
+        if key in self.static_dict:
+            return self.static_dict[key]
+        else:
+            return self.wrapped_dict[key]
+            
+    def __setitem__(self, key, value):
+        if key in self.static_dict:
+            raise KeyError("static key: can't write")
+        else:
+            self.wrapped_dict[key] = value
+            
+    def __delitem__(self, key):
+        if key in self.static_dict:
+            raise KeyError("static key: can't write")
+        else:
+            del self.wrapped_dict[key]
+            
+    def __iter__(self):
+        return chain(iter(self.static_dict), iter(self.wrapped_dict))
+        
+    def __len__(self):
+        return len(self.static_dict) + len(self.wrapped_dict)
+            
+
 def write_item(zipOut, relroot, root, permissions=0755):
     """ check if a path points to a link, or a file, or a directory,
     and take appropriate action in the zip archive """
@@ -374,15 +449,19 @@ def write_item(zipOut, relroot, root, permissions=0755):
         zipOut.write(root, relpath)
 
 
+def isLink(full_path):
+    return os.path.exists(full_path + '.link')
+
 def link(node, link):
-    if not 'target' in node.attrs:
-        node.attrs["target"] = _b(node.name) # Force string, not unicode
     try:
-        node.parent[link] = node
+        FieldLink(node, link, node.path)
     except:
         annotate_exception("when linking %s to %s"%(link, node.name))
         raise
 
+def update_hard_links(*args, **kw):
+    pass
+    
 def annotate_exception(msg, exc=None):
     """
     Add an annotation to the current exception, which can then be forwarded
