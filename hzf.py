@@ -278,6 +278,15 @@ class FieldFile(object):
     def __repr__(self):
         return "<HDZIP field \"%s\" %s \"%s\">" % (self.name, str(self.attrs['shape']), self.attrs['dtype'])
     
+    # promote a few attrs items to python object attributes:
+    @property
+    def shape(self):
+        return self.attrs.get('shape', None)
+    
+    @property
+    def dtype(self):
+        return self.attrs.get('dtype', None)
+    
     @property
     def name(self):
         return self.path
