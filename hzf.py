@@ -46,10 +46,14 @@ class Node(object):
         keys = self.keys()
         return [(k, self[k]) for k in keys]
     
+    def __contains__(self, key):
+        return (key in self.keys())
+    
     def __getitem__(self, path):
         """ get an item based only on its path.
         Can assume that next-to-last segment is a group (dataset is lowest level)
         """
+        print path
         if path.startswith("/"):
             # absolute path
             full_path = path
@@ -155,7 +159,8 @@ class FieldFile(object):
         'S': '%s',
         'f': '%.8g',
         'i': '%d',
-        'u': '%d' }
+        'u': '%d',
+        'b': '%d'}
         
     _attrs_suffix = ".attrs"
         
@@ -269,14 +274,24 @@ class FieldFile(object):
             attrs['label'] = kw.setdefault('label', None)
             attrs['binary'] = kw.setdefault('binary', False)
             attrs['byteorder'] = sys.byteorder
+            if attrs['dtype'] is None:
+                raise TypeError("dtype missing when creating %s" % (path,))
             self.attrs.clear()
             self.attrs.update(attrs)
             self.attrs._write()
             if data is not None:
+                if numpy.isscalar(data): data = [data]
+                data = numpy.asarray(data, dtype=attrs['dtype'])        
                 self.value = data
     
     def __repr__(self):
         return "<HDZIP field \"%s\" %s \"%s\">" % (self.name, str(self.attrs['shape']), self.attrs['dtype'])
+    
+    def __getitem__(self, *args):
+        print args
+        
+    def __setitem__(self, *args):
+        print args
     
     # promote a few attrs items to python object attributes:
     @property
@@ -304,7 +319,7 @@ class FieldFile(object):
             if attrs.get('binary', False) == True:
                 d = numpy.fromfile(infile, dtype=attrs['format'])
             else:
-                d = numpy.loadtxt(infile, dtype=attrs['dtype'])
+                d = numpy.loadtxt(infile, dtype=numpy.dtype(str(attrs['format'])))
         if 'shape' in attrs:
             d = d.reshape(attrs['shape'])
         return d              
@@ -313,14 +328,14 @@ class FieldFile(object):
     def value(self, data):
         attrs = self.attrs
         if hasattr(data, 'shape'): attrs['shape'] = data.shape
+        elif hasattr(data, '__len__'): attrs['shape'] = [data.__len__()]
         if hasattr(data, 'dtype'): 
             formatstr = '<' if attrs['byteorder'] == 'little' else '>'
             formatstr += data.dtype.char
             formatstr += "%d" % (data.dtype.itemsize * 8,)
-            
-        attrs['format'] = formatstr
-        attrs['dtype'] = data.dtype.name
-        attrs['shape'] = data.shape
+            attrs['format'] = formatstr            
+            attrs['dtype'] = data.dtype.name
+        
         self._write_data(data, 'w')
             
     def _write_data(self, data, mode='w'):
@@ -328,7 +343,7 @@ class FieldFile(object):
         if self.attrs.get('binary', False) == True:
             with builtin_open(target, mode + "b") as outfile:                           
                 data.tofile(outfile)
-        else:
+        else:            
             with builtin_open(target, mode) as outfile:       
                 numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
                 
@@ -486,7 +501,8 @@ def annotate_exception(msg, exc=None):
         
 def make_zipfile_withlinks(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
     relroot = os.path.abspath(source_dir)
-    with zipfile.ZipFile(output_filename, "w", compression) as zipped:
+    try: 
+        zipped = zipfile.ZipFile(output_filename, "w", compression)
         for root, dirs, files in os.walk(source_dir):
             # add directory (needed for empty dirs)
             for d in dirs:
@@ -494,7 +510,9 @@ def make_zipfile_withlinks(output_filename, source_dir, compression=zipfile.ZIP_
                 write_item(zipped, relroot, dirname)
             for f in files:
                 filename = os.path.join(root, f)
-                write_item(zipped, relroot, filename)         
+                write_item(zipped, relroot, filename)
+    finally:
+        zipped.close()
                             
 
 #compatibility with h5nexus:
