@@ -1,7 +1,5 @@
 import os, sys
 import zipfile, tempfile, shutil
-import json
-from collections import OrderedDict
 from json_backed_dict import JSONBackedDict
 import numpy
 import iso8601
