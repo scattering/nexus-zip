@@ -286,11 +286,13 @@ class FieldFile(object):
     def __repr__(self):
         return "<HDZIP field \"%s\" %s \"%s\">" % (self.name, str(self.attrs['shape']), self.attrs['dtype'])
     
-    def __getitem__(self, *args):
-        return self.value.__getitem__(args)
+    def __getitem__(self, slice_def):
+        return self.value.__getitem__(slice_def)
         
-    def __setitem__(self, *args):
-        print 'setting: ', args
+    def __setitem__(self, slice_def, newvalue):
+        intermediate = self.value
+        intermediate[slice_def] = newvalue
+        self.value = intermediate 
     
     # promote a few attrs items to python object attributes:
     @property
