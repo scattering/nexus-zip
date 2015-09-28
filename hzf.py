@@ -48,6 +48,20 @@ class Node(object):
     
     def __contains__(self, key):
         return (key in self.keys())
+        
+    def __delitem__(self, path):
+        if not path.startswith("/"):
+            path = os.path.join(self.path, path)
+        del_key = os.path.basename(path)
+        parent_os_path = os.path.join(self.os_path, os.path.dirname(path).lstrip("/"))
+        files = os.listdir(parent_os_path)
+        for fn in files:
+            full_path = os.path.join(parent_os_path, fn)
+            if fn.split(".")[0] == del_key:
+                if os.path.isdir(full_path):
+                    shutil.rmtree(full_path)
+                else:
+                    os.remove(full_path)
     
     def __getitem__(self, path):
         """ get an item based only on its path.
@@ -114,7 +128,11 @@ class File(Node):
                 attrs['creator'] = creator       
         self.attrs.update(attrs)
         self.attrs._write()
-
+    
+    def flush(self):
+        # might make this do writezip someday.
+        pass
+        
     def __repr__(self):
         return "<HDZIP file \"%s\" (mode %s)>" % (self.filename, self.mode)
            
@@ -333,7 +351,7 @@ class FieldFile(object):
         if hasattr(data, 'dtype'): 
             formatstr = '<' if attrs['byteorder'] == 'little' else '>'
             formatstr += data.dtype.char
-            formatstr += "%d" % (data.dtype.itemsize * 8,)
+            formatstr += "%d" % (data.dtype.itemsize,)
             attrs['format'] = formatstr            
             attrs['dtype'] = data.dtype.name
         
@@ -354,7 +372,7 @@ class FieldFile(object):
         # it becomes (4,4), if it is (3,4,5) it becomes (4,4,5)
         attrs = self.attrs
         if (list(data.shape) != list(attrs.get('shape', [])[1:])):
-            raise Exception("invalid shape to append")
+            raise Exception("invalid shape to append: %r can't append to %r for %s (%r)" % (data.shape, attrs.get('shape', "No shape"), self.name, data))
         if data.dtype != attrs['dtype']:
             if coerce_dtype == False:
                 raise Exception("dtypes do not match, and coerce is set to False")
@@ -370,11 +388,11 @@ class FieldFile(object):
         attrs = self.attrs
         if (list(data.shape[1:]) != list(attrs.get('shape', [])[1:])):
             raise Exception("invalid shape to append")
-        if data.dtype != attrs['dtype']:
-            if coerce_dtype == False:
-                raise Exception("dtypes do not match, and coerce is set to False")
-            else:
-                data = data.astype(attrs['dtype'])
+        #if data.dtype != attrs['dtype']:
+        #    if coerce_dtype == False:
+        #        raise Exception("dtypes do not match, and coerce is set to False")
+        #    else:
+        #        data = data.astype(attrs['dtype'])
                 
         new_shape = list(attrs['shape'])
         new_shape[0] += data.shape[0]
