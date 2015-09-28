@@ -53,6 +53,10 @@ class JSONBackedDict(dict):
     def setdefault(self, *args, **kw):
         dict.setdefault(self, *args, **kw)
         self._write()
+    
+    def __delitem__(self, key):
+        dict.__delitem__(self, key)
+        self._write()
         
     def pop(self, *args, **kw):
         val = dict.pop(self, *args, **kw)

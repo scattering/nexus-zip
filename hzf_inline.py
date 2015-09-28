@@ -13,7 +13,7 @@ class Node(object):
     _attrs_filename = ".attrs"
     _fields_filename = ".fields"
     
-    def __init__(self, parent_node, path="/", nxclass=None, attrs={}):
+    def __init__(self, parent_node, path="/", nxclass="NXCollection", attrs={}):
         self.root_node = self if parent_node is None else parent_node.root_node
         if path.startswith("/"):
             # absolute path
@@ -26,8 +26,10 @@ class Node(object):
         if not preexisting:
             os.mkdir(os.path.join(self.os_path, self.path.lstrip("/")))
             attrs['NX_class'] = nxclass.encode('UTF-8')
-        self.attrs = JSONBackedDict(os.path.join(self.os_path, self._attrs_filename))
-        self.fields = JSONBackedDict(os.path.join(self.os_path, self._fields_filename))
+        #print "making things: ", os.path.join(self.os_path, self.path.lstrip("/"))
+        self.attrs = JSONBackedDict(os.path.join(self.os_path, self.path.lstrip("/"), self._attrs_filename))
+        self.attrs.update(attrs)
+        self.fields = JSONBackedDict(os.path.join(self.os_path, self.path.lstrip("/"), self._fields_filename))
     
     @property
     def parent(self):
@@ -56,7 +58,30 @@ class Node(object):
     
     def __contains__(self, key):
         return (key in self.keys())
-    
+        
+    def __delitem__(self, path):
+        if not path.startswith("/"):
+            path = os.path.join(self.path, path)
+        os_path = os.path.join(self.os_path, path.lstrip("/"))
+        parent_path = os.path.dirname(path)
+        parent_os_path = os.path.join(self.os_path, parent_path.lstrip("/"))
+        field_name = os.path.basename(path)
+        print "deleting:", field_name, parent_path, os_path, parent_os_path
+        if os.path.exists(os_path) and os.path.isdir(os_path):
+            # it's a group: remove the whole directory
+            shutil.rmtree(os_path)
+        elif os.path.exists(parent_os_path) and os.path.isdir(parent_os_path):
+            parent_group = Group(self, parent_path)
+            print "deleting field: ", parent_group.fields
+            if field_name in parent_group.fields:
+                del parent_group.fields[field_name]
+                if os.path.exists(os.path.join(parent_os_path, field_name + ".dat")):
+                    os.remove(os.path.join(parent_os_path, field_name + ".dat"))
+            else:
+                raise KeyError(field_name)
+        else:
+            raise KeyError(field_name)
+           
     def __getitem__(self, path):
         """ get an item based only on its path.
         Can assume that next-to-last segment is a group (dataset is lowest level)
@@ -69,17 +94,20 @@ class Node(object):
             full_path = os.path.join(self.path, path)
 
         os_path = os.path.join(self.os_path, full_path.lstrip("/"))
-        parent_path = os.path.dirname(full_path.lstrip("/"))
-        #print parent_path, Group(self, parent_path).fields
+        parent_path = os.path.dirname(full_path)
+        parent_os_path = os.path.join(self.os_path, parent_path.lstrip("/"))
         field_name = os.path.basename(full_path)
         if os.path.exists(os_path) and os.path.isdir(os_path):
             return Group(self, full_path)
-        elif field_name in Group(self, parent_path).fields:
+        elif os.path.exists(parent_os_path):
             parent_group = Group(self, parent_path)
-            if 'target' in parent_group.fields[field_name]:
-                return FieldLink(self, path)
+            if field_name in parent_group.fields:
+                if 'target' in parent_group.fields[field_name]:
+                    return FieldLink(self, path)
+                else:
+                    return Field(self, path)
             else:
-                return Field(self, path)
+                raise KeyError(path)
         else:
             # the item doesn't exist
             raise KeyError(path)
@@ -123,6 +151,10 @@ class File(Node):
         self.attrs.update(attrs)
         self.attrs._write()
 
+    def flush(self):
+        # might make this do writezip someday.
+        pass
+        
     def __repr__(self):
         return "<HDZIP file \"%s\" (mode %s)>" % (self.filename, self.mode)
            
@@ -138,11 +170,7 @@ class File(Node):
     
 class Group(Node):
     def __init__(self, node, path, nxclass="NXCollection", attrs={}):
-        Node.__init__(self, parent_node=node, path=path, nxclass=nxclass)
-                       
-        self.attrs = JSONBackedDict(os.path.join(self.os_path, self.path.lstrip("/"), self._attrs_filename))
-        self.attrs.update(attrs)
-        self.attrs._write()
+        Node.__init__(self, parent_node=node, path=path, nxclass=nxclass, attrs=attrs)
         
     def __repr__(self):
         return "<HDZIP group \"" + self.path + "\">"
@@ -162,26 +190,27 @@ class Field(object):
             # relative path:
             path = os.path.join(node.path, path)
         self.path = path
-        self.name = os.path.basename(self.path)
+        self.basename = os.path.basename(self.path)
         group_path = os.path.dirname(self.path)
-        preexisting = self.name in self.parent.fields
+        preexisting = self.basename in self.parent.fields
+        print self.basename, group_path
   
         if preexisting:
-            self.attrs = self.parent.fields[self.name]['attrs']
+            self.attrs = self.parent.fields[self.basename]['attrs']
         else:
-            self.parent.fields[self.name] = {"attrs": {}}
+            self.parent.fields[self.basename] = {"attrs": {}}
             data = kw.pop('data', numpy.array([]))
             attrs = kw.pop('attrs', {})
             attrs['description'] = kw.setdefault('description', None)
             attrs['dtype'] = kw.setdefault('dtype', None)
             attrs['units'] = kw.setdefault('units', None)
-            attrs['inline'] = kw.setdefault('inline', None)
+            attrs['inline'] = kw.setdefault('inline', True)
             attrs['label'] = kw.setdefault('label', None)
             attrs['binary'] = kw.setdefault('binary', False)
             attrs['byteorder'] = sys.byteorder
             if attrs['dtype'] is None:
                 raise TypeError("dtype missing when creating %s" % (path,))
-            self.attrs = self.parent.fields[self.name]['attrs']
+            self.attrs = self.parent.fields[self.basename]['attrs']
             self.attrs.update(attrs)
             if data is not None:
                 if numpy.isscalar(data): data = [data]
@@ -189,245 +218,7 @@ class Field(object):
                 self.value = data
     
     def __repr__(self):
-        return "<HDZIP field \"%s\" %s \"%s\">" % (self.name, str(self.attrs['shape']), self.attrs['dtype'])
-    
-    def __getitem__(self, slice_def):
-        return self.value.__getitem__(slice_def)
-        
-    def __setitem__(self, slice_def, newvalue):
-        intermediate = self.value
-        intermediate[slice_def] = newvalue
-        self.value = intermediate 
-    
-    # promote a few attrs items to python object attributes:
-    @property
-    def shape(self):
-        return self.attrs.get('shape', None)
-    
-    @property
-    def dtype(self):
-        return self.attrs.get('dtype', None)
-    
-    #@property
-    #def name(self):
-    #    return self.path
-          
-    @property
-    def parent(self):
-        return self.root_node[os.path.dirname(self.name)]
-                    
-    @property
-    def value(self):
-        field = self.parent.fields[self.name]
-        if self.attrs.get('inline', False) == True:
-            return field['value']
-        else: 
-            attrs = self.attrs
-            target = os.path.join(self.os_path, self.path.lstrip("/"))
-            with builtin_open(target, 'rb') as infile:
-                if attrs.get('binary', False) == True:
-                    d = numpy.fromfile(infile, dtype=attrs['format'])
-                else:
-                    d = numpy.loadtxt(infile, dtype=numpy.dtype(str(attrs['format'])))
-            if 'shape' in attrs:
-                d = d.reshape(attrs['shape'])
-            return d              
-        
-    @value.setter
-    def value(self, data):
-        attrs = self.attrs
-        field = self.parent.fields[self.name]
-        if hasattr(data, 'shape'): field['attrs']['shape'] = list(data.shape)
-        elif hasattr(data, '__len__'): field['attrs']['shape'] = [data.__len__()]
-        if hasattr(data, 'dtype'): 
-            formatstr = '<' if attrs['byteorder'] == 'little' else '>'
-            formatstr += data.dtype.char
-            formatstr += "%d" % (data.dtype.itemsize * 8,)
-            field['attrs']['format'] = formatstr            
-            field['attrs']['dtype'] = data.dtype.name
-        
-        print self.attrs, self.parent.fields, "inline?"
-        if self.attrs.get('inline', False) == True:         
-            if hasattr(data, 'tolist'): data = data.astype(attrs['dtype']).tolist()
-            field['value'] = data
-        else:
-            field['value'] = {"file": self.path}
-            self._write_data(data, 'w')
-            
-    def _write_data(self, data, mode='w'):
-        target = os.path.join(self.os_path, self.path.lstrip("/"))
-        if self.attrs.get('binary', False) == True:
-            with builtin_open(target, mode + "b") as outfile:                           
-                data.tofile(outfile)
-        else:            
-            with builtin_open(target, mode) as outfile:       
-                numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
-    
-    def append(self, data, coerce_dtype=True):
-        # add to the data...
-        # can only append along the first axis, e.g. if shape is (3,4)
-        # it becomes (4,4), if it is (3,4,5) it becomes (4,4,5)
-        field = self.parent.fields[self.name]
-        if (list(data.shape) != list(field['attrs'].get('shape', [])[1:])):
-            raise Exception("invalid shape to append")
-        if data.dtype != field['attrs']['dtype']:
-            if coerce_dtype == False:
-                raise Exception("dtypes do not match, and coerce is set to False")
-            else:
-                data = data.astype(field['attrs']['dtype'])
-                                
-        new_shape = list(field['attrs']['shape'])
-        new_shape[0] += 1
-        field['attrs']['shape'] = new_shape
-        self._write_data(data, mode='a')
-        
-    def extend(self, data, coerce_dtype=True):
-        field = self.parent.fields[self.name]
-        if (list(data.shape[1:]) != list(field['attrs'].get('shape', [])[1:])):
-            raise Exception("invalid shape to append")
-        if data.dtype != field['attrs']['dtype']:
-            if coerce_dtype == False:
-                raise Exception("dtypes do not match, and coerce is set to False")
-            else:
-                data = data.astype(field['attrs']['dtype'])
-                
-        new_shape = list(field['attrs']['shape'])
-        new_shape[0] += data.shape[0]
-        field['attrs']['shape'] = new_shape
-        self._write_data(data, "a")
-        
-class FieldFile(object):
-    _formats = {
-        'S': '%s',
-        'f': '%.8g',
-        'i': '%d',
-        'u': '%d',
-        'b': '%d'}
-        
-    _attrs_suffix = ".attrs"
-        
-    def __init__(self, node, path, **kw):
-        """
-        Create a data object.
-        
-        Returns the data set created, or None if the data is empty.
-
-        :Parameters:
-
-        *node* : File object
-            Handle to a File-like object.  This could be a file or a group.
-
-        *path* : string
-            Path to the data.  This could be a full path from the root
-            of the file, or it can be relative to a group.  Path components
-            are separated by '/'.
-
-        *data* : array or string
-            If the data is known in advance, then the value can be given on
-            creation. Otherwise, use *shape* to give the initial storage
-            size and *maxshape* to give the maximum size.
-
-        *units* : string
-            Units to display with data.  Required for numeric data.
-
-        *label* : string
-            Axis label if data is numeric.  Default for field dataset_name
-            is "Dataset name (units)".
-
-        *attrs* : dict
-            Additional attributes to be added to the dataset.
-
-
-        :Storage options:
-
-        *dtype* : numpy.dtype
-            Specify the storage type for the data.  The set of datatypes is
-            limited only by the HDF-5 format, and its h5py interface.  Usually
-            it will be 'int32' or 'float32', though others are possible.
-            Data will default to *data.dtype* if *data* is specified, otherwise
-            it will default to 'float32'.
-
-        *shape* : [int, ...]
-            Specify the initial shape of the storage and fill it with zeros.
-            Defaults to [1, ...], or to the shape of the data if *data* is
-            specified.
-
-        *maxshape* : [int, ...]
-            Maximum size for each dimension in the dataset.  If any dimension
-            is None, then the dataset is resizable in that dimension.
-            For a 2-D detector of size (Nx,Ny) with Nt time of flight channels
-            use *maxshape=[Nx,Ny,Nt]*.  If the data is to be a series of
-            measurements, then add an additional empty dimension at the front,
-            giving *maxshape=[None,Nx,Ny,Nt]*.  If *maxshape* is not provided,
-            then use *shape*.
-
-        *chunks* : [int, ...]
-            Storage block size on disk, which is also the basic compression
-            size.  By default *chunks* is set from maxshape, with the
-            first unspecified dimension set such that the chunk size is
-            greater than nexus.CHUNK_SIZE. :func:`make_chunks` is used
-            to determine the default value.
-
-        *compression* : 'none|gzip|szip|lzf' or int
-            Dataset compression style.  If not specified, then compression
-            defaults to 'szip' for large datasets, otherwise it defaults to
-            'none'. Datasets are considered large if each frame in maxshape
-            is bigger than CHUNK_SIZE.  Eventmode data, with its small frame
-            size but large number of frames, will need to set compression
-            explicitly.  If compression is an integer, then use gzip compression
-            with that compression level.
-
-        *compression_opts* : ('ec|nn', int)
-            szip compression options.
-
-        *shuffle* : boolean
-            Reorder the bytes before applying 'gzip' or 'hzf' compression.
-
-        *fletcher32* : boolean
-            Enable error detection of the dataset.
-
-        :Returns:
-
-        *dataset* : file-backed data object
-            Reference to the created dataset.
-        """
-        self.root_node = node.root_node
-        self.os_path = node.os_path
-        if not path.startswith("/"):
-            # relative path:
-            path = os.path.join(node.path, path)
-        self.path = path
-            
-        preexisting = os.path.exists(os.path.join(self.os_path, self.path.lstrip("/")))
-            
-        self.attrs_path = self.path + self._attrs_suffix
-        self.attrs = JSONBackedDict(os.path.join(self.os_path, self.attrs_path.lstrip("/")))
-        
-        
-        
-        if preexisting:
-            pass
-        else:
-            data = kw.pop('data', numpy.array([]))
-            attrs = kw.pop('attrs', {})
-            attrs['description'] = kw.setdefault('description', None)
-            attrs['dtype'] = kw.setdefault('dtype', None)
-            attrs['units'] = kw.setdefault('units', None)
-            attrs['label'] = kw.setdefault('label', None)
-            attrs['binary'] = kw.setdefault('binary', False)
-            attrs['byteorder'] = sys.byteorder
-            if attrs['dtype'] is None:
-                raise TypeError("dtype missing when creating %s" % (path,))
-            self.attrs.clear()
-            self.attrs.update(attrs)
-            self.attrs._write()
-            if data is not None:
-                if numpy.isscalar(data): data = [data]
-                data = numpy.asarray(data, dtype=attrs['dtype'])        
-                self.value = data
-    
-    def __repr__(self):
-        return "<HDZIP field \"%s\" %s \"%s\">" % (self.name, str(self.attrs['shape']), self.attrs['dtype'])
+        return "<HDZIP field \"%s\" %s \"%s\">" % (self.basename, str(self.attrs['shape']), self.attrs['dtype'])
     
     def __getitem__(self, slice_def):
         return self.value.__getitem__(slice_def)
@@ -450,102 +241,108 @@ class FieldFile(object):
     def name(self):
         return self.path
           
-          
     @property
     def parent(self):
-        return self.root_node[os.path.dirname(self.name)]
-                
+        return self.root_node[os.path.dirname(self.path)]
+                    
     @property
     def value(self):
-        attrs = self.attrs
-        target = os.path.join(self.os_path, self.path.lstrip("/"))
-        with builtin_open(target, 'rb') as infile:
-            if attrs.get('binary', False) == True:
-                d = numpy.fromfile(infile, dtype=attrs['format'])
-            else:
-                d = numpy.loadtxt(infile, dtype=numpy.dtype(str(attrs['format'])))
-        if 'shape' in attrs:
-            d = d.reshape(attrs['shape'])
-        return d              
-    
+        field = self.parent.fields[self.basename]
+        if self.attrs.get('inline', False) == True:
+            return field['value']
+        else: 
+            attrs = self.attrs
+            target = os.path.join(self.os_path, self.path.lstrip("/"))
+            with builtin_open(target, 'rb') as infile:
+                if attrs.get('binary', False) == True:
+                    d = numpy.fromfile(infile, dtype=attrs['format'])
+                else:
+                    d = numpy.loadtxt(infile, dtype=numpy.dtype(str(attrs['format'])))
+            if 'shape' in attrs:
+                d = d.reshape(attrs['shape'])
+            return d              
+        
     @value.setter
     def value(self, data):
         attrs = self.attrs
-        if hasattr(data, 'shape'): self.attrs['shape'] = data.shape
-        elif hasattr(data, '__len__'): self.attrs['shape'] = [data.__len__()]
+        field = self.parent.fields[self.basename]
+        if hasattr(data, 'shape'): field['attrs']['shape'] = list(data.shape)
+        elif hasattr(data, '__len__'): field['attrs']['shape'] = [data.__len__()]
         if hasattr(data, 'dtype'): 
             formatstr = '<' if attrs['byteorder'] == 'little' else '>'
             formatstr += data.dtype.char
-            formatstr += "%d" % (data.dtype.itemsize * 8,)
-            self.attrs['format'] = formatstr            
-            self.attrs['dtype'] = data.dtype.name
+            formatstr += "%d" % (data.dtype.itemsize,)
+            field['attrs']['format'] = formatstr            
+            field['attrs']['dtype'] = data.dtype.name
         
-        self._write_data(data, 'w')
+        #print self.attrs, self.parent.fields, "inline?"
+        if field['attrs'].get('inline', False) == True:
+            print hasattr(data, 'tolist'), data, str(field['attrs']['dtype'])
+            if hasattr(data, 'tolist'): data = data.tolist()
+            field['value'] = data
+        else:
+            field['value'] = {"file": self.path + ".dat"}
+            self._write_data(data, 'w')
             
     def _write_data(self, data, mode='w'):
-        target = os.path.join(self.os_path, self.path.lstrip("/"))
+        target = os.path.join(self.os_path, self.path.lstrip("/") + ".dat")
         if self.attrs.get('binary', False) == True:
             with builtin_open(target, mode + "b") as outfile:                           
                 data.tofile(outfile)
         else:            
             with builtin_open(target, mode) as outfile:       
                 numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
-                
+    
     def append(self, data, coerce_dtype=True):
         # add to the data...
         # can only append along the first axis, e.g. if shape is (3,4)
         # it becomes (4,4), if it is (3,4,5) it becomes (4,4,5)
-        attrs = self.attrs
-        if (list(data.shape) != list(attrs.get('shape', [])[1:])):
+        field = self.parent.fields[self.basename]
+        if (list(data.shape) != list(field['attrs'].get('shape', [])[1:])):
             raise Exception("invalid shape to append")
-        if data.dtype != attrs['dtype']:
+        if data.dtype != str(field['attrs']['dtype']):
             if coerce_dtype == False:
                 raise Exception("dtypes do not match, and coerce is set to False")
             else:
-                data = data.astype(attrs['dtype'])
+                data = data.astype(str(field['attrs']['dtype']))
                                 
-        new_shape = list(attrs['shape'])
+        new_shape = list(field['attrs']['shape'])
         new_shape[0] += 1
-        attrs['shape'] = new_shape
-        self._write_data(data, mode='a')
+        field['attrs']['shape'] = new_shape
+        if field['attrs'].get('inline', False) == True:
+            # can only overwrite whole data if inline
+            self.value = self.value.append(data.tolist())
+        else:
+            self._write_data(data, mode='a')
         
     def extend(self, data, coerce_dtype=True):
-        attrs = self.attrs
-        if (list(data.shape[1:]) != list(attrs.get('shape', [])[1:])):
+        field = self.parent.fields[self.basename]
+        if (list(data.shape[1:]) != list(field['attrs'].get('shape', [])[1:])):
             raise Exception("invalid shape to append")
-        if data.dtype != attrs['dtype']:
+        if data.dtype != str(field['attrs']['dtype']):
             if coerce_dtype == False:
                 raise Exception("dtypes do not match, and coerce is set to False")
             else:
-                data = data.astype(attrs['dtype'])
+                data = data.astype(str(field['attrs']['dtype']))
                 
-        new_shape = list(attrs['shape'])
+        new_shape = list(field['attrs']['shape'])
         new_shape[0] += data.shape[0]
-        attrs['shape'] = new_shape
-        self._write_data(data, "a")
-
-class FieldLink(FieldFile):
+        field['attrs']['shape'] = new_shape
+        if field['attrs'].get('inline', False) == True:
+            # can only overwrite whole data if inline
+            intermediate = self.value
+            intermediate.extend(data)
+            self.value = self.value.extend(data.tolist())
+        else:
+            self._write_data(data, mode='a')
+        
+class FieldLink(Field):
     def __init__(self, node, path, target_path=None, **kw):
         if not path.startswith("/"):
             path = os.path.join(node.path, path)
         self.orig_path = path
-        self.os_path = node.os_path
-        orig_attrs_path = path + ".link"
-        self.orig_attrs = JSONBackedDict(os.path.join(self.os_path, orig_attrs_path.lstrip("/")))
-                
-        if 'target' in self.orig_attrs:
-            target_path = self.orig_attrs['target']
-        else:
-            self.orig_attrs['target'] = target_path
         
-        FieldFile.__init__(self, node, target_path, **kw)
-        preexisting = os.path.exists(os.path.join(self.os_path, self.orig_path.lstrip("/")))
-        if preexisting:
-            pass
-        else:
-            builtin_open(os.path.join(self.os_path, self.orig_path.lstrip("/")), "w").write("soft link: see .link file for target")
-            
-        self.attrs = StaticDictWrapper(self.attrs, self.orig_attrs)
+        Field.__init__(self, node, target_path, **kw)
       
     @property
     def name(self):
@@ -661,7 +458,7 @@ def make_zipfile_withlinks(output_filename, source_dir, compression=zipfile.ZIP_
 
 #compatibility with h5nexus:
 group = Group
-field = FieldFile 
+field = Field
 open = File
 
 def extend(node, data):
