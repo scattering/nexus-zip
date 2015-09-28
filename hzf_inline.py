@@ -45,8 +45,9 @@ class Node(object):
     def keys(self):
         thisdir = os.path.join(self.os_path, self.path.lstrip("/"))
         subgroups = [x for x in os.listdir(thisdir) if os.path.isdir(os.path.join(thisdir, x))]
+        self.fields._read() # need to get most up to date value from disk
         field_keys = self.fields.keys()
-        subgroups.append(field_keys)
+        subgroups.extend(field_keys)
         return subgroups
         
     def items(self):
@@ -187,6 +188,30 @@ class Field(object):
                 data = numpy.asarray(data, dtype=attrs['dtype'])        
                 self.value = data
     
+    def __repr__(self):
+        return "<HDZIP field \"%s\" %s \"%s\">" % (self.name, str(self.attrs['shape']), self.attrs['dtype'])
+    
+    def __getitem__(self, slice_def):
+        return self.value.__getitem__(slice_def)
+        
+    def __setitem__(self, slice_def, newvalue):
+        intermediate = self.value
+        intermediate[slice_def] = newvalue
+        self.value = intermediate 
+    
+    # promote a few attrs items to python object attributes:
+    @property
+    def shape(self):
+        return self.attrs.get('shape', None)
+    
+    @property
+    def dtype(self):
+        return self.attrs.get('dtype', None)
+    
+    #@property
+    #def name(self):
+    #    return self.path
+          
     @property
     def parent(self):
         return self.root_node[os.path.dirname(self.name)]
@@ -212,16 +237,17 @@ class Field(object):
     def value(self, data):
         attrs = self.attrs
         field = self.parent.fields[self.name]
-        if hasattr(data, 'shape'): attrs['shape'] = data.shape
-        elif hasattr(data, '__len__'): attrs['shape'] = [data.__len__()]
+        if hasattr(data, 'shape'): field['attrs']['shape'] = list(data.shape)
+        elif hasattr(data, '__len__'): field['attrs']['shape'] = [data.__len__()]
         if hasattr(data, 'dtype'): 
             formatstr = '<' if attrs['byteorder'] == 'little' else '>'
             formatstr += data.dtype.char
             formatstr += "%d" % (data.dtype.itemsize * 8,)
-            attrs['format'] = formatstr            
-            attrs['dtype'] = data.dtype.name
+            field['attrs']['format'] = formatstr            
+            field['attrs']['dtype'] = data.dtype.name
         
-        if self.attrs.get('inline', False) == True:            
+        print self.attrs, self.parent.fields, "inline?"
+        if self.attrs.get('inline', False) == True:         
             if hasattr(data, 'tolist'): data = data.astype(attrs['dtype']).tolist()
             field['value'] = data
         else:
@@ -236,6 +262,39 @@ class Field(object):
         else:            
             with builtin_open(target, mode) as outfile:       
                 numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
+    
+    def append(self, data, coerce_dtype=True):
+        # add to the data...
+        # can only append along the first axis, e.g. if shape is (3,4)
+        # it becomes (4,4), if it is (3,4,5) it becomes (4,4,5)
+        field = self.parent.fields[self.name]
+        if (list(data.shape) != list(field['attrs'].get('shape', [])[1:])):
+            raise Exception("invalid shape to append")
+        if data.dtype != field['attrs']['dtype']:
+            if coerce_dtype == False:
+                raise Exception("dtypes do not match, and coerce is set to False")
+            else:
+                data = data.astype(field['attrs']['dtype'])
+                                
+        new_shape = list(field['attrs']['shape'])
+        new_shape[0] += 1
+        field['attrs']['shape'] = new_shape
+        self._write_data(data, mode='a')
+        
+    def extend(self, data, coerce_dtype=True):
+        field = self.parent.fields[self.name]
+        if (list(data.shape[1:]) != list(field['attrs'].get('shape', [])[1:])):
+            raise Exception("invalid shape to append")
+        if data.dtype != field['attrs']['dtype']:
+            if coerce_dtype == False:
+                raise Exception("dtypes do not match, and coerce is set to False")
+            else:
+                data = data.astype(field['attrs']['dtype'])
+                
+        new_shape = list(field['attrs']['shape'])
+        new_shape[0] += data.shape[0]
+        field['attrs']['shape'] = new_shape
+        self._write_data(data, "a")
         
 class FieldFile(object):
     _formats = {
@@ -412,14 +471,14 @@ class FieldFile(object):
     @value.setter
     def value(self, data):
         attrs = self.attrs
-        if hasattr(data, 'shape'): attrs['shape'] = data.shape
-        elif hasattr(data, '__len__'): attrs['shape'] = [data.__len__()]
+        if hasattr(data, 'shape'): self.attrs['shape'] = data.shape
+        elif hasattr(data, '__len__'): self.attrs['shape'] = [data.__len__()]
         if hasattr(data, 'dtype'): 
             formatstr = '<' if attrs['byteorder'] == 'little' else '>'
             formatstr += data.dtype.char
             formatstr += "%d" % (data.dtype.itemsize * 8,)
-            attrs['format'] = formatstr            
-            attrs['dtype'] = data.dtype.name
+            self.attrs['format'] = formatstr            
+            self.attrs['dtype'] = data.dtype.name
         
         self._write_data(data, 'w')
             
