@@ -32,8 +32,11 @@ class Node(object):
                
     @property
     def groups(self):
-        groupnames = [x for x in os.listdir(os.path.join(self.os_path, self.path.lstrip("/"))) if os.path.isdir(os.path.join(self.os_path, self.path.lstrip("/"), x))] 
-        return dict([(gn, Group(self, gn)) for gn in groupnames])
+        return dict([(gn, Group(self, gn)) for gn in self.groupnames])
+        
+    @property
+    def groupnames(self):
+        return  [x for x in os.listdir(os.path.join(self.os_path, self.path.lstrip("/"))) if os.path.isdir(os.path.join(self.os_path, self.path.lstrip("/"), x))] 
     
     @property
     def name(self):
@@ -47,7 +50,14 @@ class Node(object):
         return [(k, self[k]) for k in keys]
     
     def __contains__(self, key):
-        return (key in self.keys())
+        return os.path.exists(os.path.join(self.os_path, self.path.lstrip("/"), key))
+        #subkeys = key.split("/")
+        #if subkeys.length <= 1:
+        #    return (key in self.keys())
+        #else:
+        #    subkey = subkeys.pop(0)
+        #    remaining = subkeys.join("/")
+        #    return ((subkey in self.groupnames) and (remaining in Group(self, subkey)))
         
     def __delitem__(self, path):
         if not path.startswith("/"):
@@ -143,7 +153,8 @@ class File(Node):
         shutil.rmtree(self.os_path)
         
     def writezip(self):
-        make_zipfile_withlinks(self.filename, os.path.join(self.os_path, self.path.lstrip("/")), self.compression)
+        make_zipfile(self.filename, os.path.join(self.os_path, self.path.lstrip("/")), self.compression)
+        #shutil.rmtree(self.os_path)
         
     
 class Group(Node):
@@ -338,7 +349,12 @@ class FieldFile(object):
             if attrs.get('binary', False) == True:
                 d = numpy.fromfile(infile, dtype=attrs['format'])
             else:
-                d = numpy.loadtxt(infile, dtype=numpy.dtype(str(attrs['format'])))
+                if os.path.getsize(target) == 1:
+                    # empty entry: only contains \n
+                    # this is only possible with empty string being written.
+                    d = numpy.array([''], dtype=numpy.dtype(str(attrs['format'])))
+                else:
+                    d = numpy.loadtxt(infile, dtype=numpy.dtype(str(attrs['format'])))
         if 'shape' in attrs:
             d = d.reshape(attrs['shape'])
         return d              
@@ -518,7 +534,7 @@ def annotate_exception(msg, exc=None):
         arg0 = " ".join((args[0],msg))
     exc.args = tuple([arg0] + list(args[1:]))
         
-def make_zipfile_withlinks(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
+def make_zipfile(output_filename, source_dir, compression=zipfile.ZIP_DEFLATED):
     relroot = os.path.abspath(source_dir)
     try: 
         zipped = zipfile.ZipFile(output_filename, "w", compression)
