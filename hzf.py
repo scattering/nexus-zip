@@ -107,9 +107,12 @@ class Node(object):
         Group(self, path, nxclass, attrs)
 
 class File(Node):
-    def __init__(self, filename, mode="r", timestamp=None, creator=None, compression=zipfile.ZIP_DEFLATED, attrs={}, **kw):
-        fn = tempfile.mkdtemp()
-        self.os_path = fn
+    def __init__(self, filename, mode="r", timestamp=None, creator=None, compression=zipfile.ZIP_DEFLATED, attrs={}, os_path=None, **kw):
+        if os_path is None:
+            fn = tempfile.mkdtemp()
+            self.os_path = fn
+        else:
+            self.os_path = os_path
         Node.__init__(self, parent_node=None, path="/")        
         self.attrs = JSONBackedDict(os.path.join(self.os_path, self._attrs_filename))
         self.filename = filename
@@ -148,9 +151,10 @@ class File(Node):
            
     def close(self):
         # there seems to be only one read-only mode
-        if self.mode != "r":
-            self.writezip()
-        shutil.rmtree(self.os_path)
+        if os.path.exists(self.os_path):
+            if self.mode != "r":
+                self.writezip()
+            shutil.rmtree(self.os_path)
         
     def writezip(self):
         make_zipfile(self.filename, os.path.join(self.os_path, self.path.lstrip("/")), self.compression)
