@@ -44,7 +44,7 @@ class Writer(BaseWriter):
         self.active_scan = None
         self.active_scan_handle = None
         self.scans = {}
-        self.tmp_path = None
+        self.tmp_paths = {}
         self.reported_paths = set()
 
     def configure(self, state):
@@ -83,9 +83,9 @@ class Writer(BaseWriter):
             
         self.active_scan = path, entryname
         if not self.active_scan in self.scans:
-            new_scan = Scan(path, entryname, state, self.tmp_path)
+            new_scan = Scan(path, entryname, state, self.tmp_paths.get(path, None))
             self.scans[self.active_scan] = new_scan
-            self.tmp_path = new_scan.h5file.os_path
+            self.tmp_paths[path] = new_scan.h5file.os_path
         self.active_scan_handle = self.scans[self.active_scan]
 
         if self.zipped:
