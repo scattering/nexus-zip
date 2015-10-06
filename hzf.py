@@ -51,13 +51,6 @@ class Node(object):
     
     def __contains__(self, key):
         return os.path.exists(os.path.join(self.os_path, self.path.lstrip("/"), key))
-        #subkeys = key.split("/")
-        #if subkeys.length <= 1:
-        #    return (key in self.keys())
-        #else:
-        #    subkey = subkeys.pop(0)
-        #    remaining = subkeys.join("/")
-        #    return ((subkey in self.groupnames) and (remaining in Group(self, subkey)))
         
     def __delitem__(self, path):
         if not path.startswith("/"):
