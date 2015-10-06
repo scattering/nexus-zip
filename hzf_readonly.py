@@ -112,8 +112,15 @@ class ReadOnlyNode(Node):
     def makeAttrs(self):
         return json.loads(self.root.open(os.path.join(self.path, self._attrs_filename), "r").read())
         
+def File(*args, **kw):
+    mode = kw.get("mode", "r")
+    if (mode == "r"):
+        return ReadWriteFile(*args, **kw)
+    else:
+        return ReadWriteFile(*args, **kw)
+        
 
-class File(Node):
+class ReadWriteFile(Node):
     def __init__(self, filename, mode="r", timestamp=None, creator=None, compression=zipfile.ZIP_DEFLATED, attrs={}, os_path=None, **kw):
         self.readonly = (mode == "r")
         Node.__init__(self, parent_node=None, path="/")
@@ -167,7 +174,7 @@ class File(Node):
                 return True # root path
             else:
                 filenames = self.root.zipfile.namelist()
-                return (path.rstrip("/") + "/") in filenames)
+                return ((path.rstrip("/") + "/") in filenames)
         else:
             return os.path.isdir(os.path.join(self.os_path, path))
             
@@ -183,10 +190,10 @@ class File(Node):
     def exists(self, path):
         """ abstraction for looking up paths: 
         should work for unpacked directories and packed zip archives """
-        path = path.lstrip("/")
+        path = path.strip("/")
         if self.readonly:
             filenames = self.root.zipfile.namelist()
-            return (path in filenames or path.rstrip("/") in filenames)
+            return (path in filenames or self.isdir(path))
         else:
             return os.path.exists(os.path.join(self.os_path, path))
     
