@@ -880,9 +880,12 @@ class Dataset(object):
             #import sys; print >>sys.stderr,"value",value
 
             #print "init field",self.path
+            binary = (len(value.shape) > 2)
+            self.attrs['binary'] = binary
+            #print (self.path, binary, self.attrs['binary'])
             h5nexus.field(self.root, self.path, data=value,
                           units=self.units, dtype=self.dtype,
-                          label=self.label, attrs=self.attrs)
+                          label=self.label, attrs=self.attrs, binary=binary)
             #print self.root[self.path]
             # _first starts out as the initial value, or the default
             #print "first point",self.path,value

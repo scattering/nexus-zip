@@ -293,11 +293,11 @@ class FieldFile(object):
         else:
             data = kw.pop('data', numpy.array([]))
             attrs = kw.pop('attrs', {})
-            attrs['description'] = kw.setdefault('description', None)
-            attrs['dtype'] = kw.setdefault('dtype', None)
-            attrs['units'] = kw.setdefault('units', None)
-            attrs['label'] = kw.setdefault('label', None)
-            attrs['binary'] = kw.setdefault('binary', False)
+            attrs.setdefault('description', kw.setdefault('description', None))
+            attrs.setdefault('dtype', kw.setdefault('dtype', None))
+            attrs.setdefault('units', kw.setdefault('units', None))
+            attrs.setdefault('label', kw.setdefault('label', None))
+            attrs.setdefault('binary', kw.setdefault('binary', False))
             attrs['byteorder'] = sys.byteorder
             if attrs['dtype'] is None:
                 raise TypeError("dtype missing when creating %s" % (path,))
@@ -306,7 +306,7 @@ class FieldFile(object):
             self.attrs._write()
             if data is not None:
                 if numpy.isscalar(data): data = [data]
-                data = numpy.asarray(data, dtype=attrs['dtype'])        
+                data = numpy.asarray(data, dtype=attrs['dtype'])
                 self.value = data
     
     def __repr__(self):
