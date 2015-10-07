@@ -14,7 +14,7 @@ class JSONBackedDict(dict):
             self._write()
     
     def _write(self):
-        fd_out, fd_out_name = tempfile.mkstemp(dir=os.curdir)
+        fd_out, fd_out_name = tempfile.mkstemp()
         fd_in_name = self.filename
         with os.fdopen(fd_out, "w") as outfile:
             outfile.write(json.dumps(self))

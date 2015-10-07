@@ -134,6 +134,7 @@ class Writer(BaseWriter):
         for path in self.reported_paths:
             util.report_file_writing(False, path, state.data)
         self.reported_paths.clear()
+        self.tmp_paths.clear()
         
 
 class Scan(object):
