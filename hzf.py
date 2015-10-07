@@ -372,6 +372,8 @@ class FieldFile(object):
             
     def _write_data(self, data, mode='w'):
         target = os.path.join(self.os_path, self.path.lstrip("/"))
+        # enforce binary if dims > 2: no way to write text file like this!
+        if data.ndim > 2: self.attrs['binary'] = True
         if self.attrs.get('binary', False) == True:
             with builtin_open(target, mode + "b") as outfile:                           
                 data.tofile(outfile)
