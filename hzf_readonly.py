@@ -115,12 +115,12 @@ class ReadOnlyNode(Node):
 def File(*args, **kw):
     mode = kw.get("mode", "r")
     if (mode == "r"):
-        return ReadWriteFile(*args, **kw)
+        return FileRW(*args, **kw)
     else:
-        return ReadWriteFile(*args, **kw)
+        return FileRW(*args, **kw)
         
 
-class ReadWriteFile(Node):
+class FileRW(Node):
     def __init__(self, filename, mode="r", timestamp=None, creator=None, compression=zipfile.ZIP_DEFLATED, attrs={}, os_path=None, **kw):
         self.readonly = (mode == "r")
         Node.__init__(self, parent_node=None, path="/")

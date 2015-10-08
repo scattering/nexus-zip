@@ -134,6 +134,7 @@ class File(Node):
                 attrs['creator'] = creator       
         self.attrs.update(attrs)
         self.attrs._write()
+        self.flush()
     
     def flush(self):
         self.writezip()
