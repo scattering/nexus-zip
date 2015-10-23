@@ -490,10 +490,10 @@ class Scan(object):
         deviceID,fieldID = scanID.split('.',1)
         if deviceID == 'counts':
             scanID = fieldID
-        elif state.devices[deviceID].get('primary',None) == fieldID:
-            scanID = deviceID
+        #elif state.devices[deviceID].get('primary',None) == fieldID:
+        #    scanID = deviceID
         else:
-            scanID = scanID.replace('.','_')
+            scanID = scanID.replace('.','/')
         return scanID
         
     def normalization_node(self, state):
