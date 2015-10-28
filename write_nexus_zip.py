@@ -463,6 +463,20 @@ class Scan(object):
                 target = "/".join((nxdata.name,nodeID.replace('.','_')))
             #print("link",source,target)
             h5nexus.link(self.das[source], target)
+            
+        # identify default y-axis
+        for nodeID in sorted(set(nodes)):
+            deviceID, fieldID = nodeID.split('.', 1)
+            source = "/".join((deviceID,fieldID))
+            if 'signal' in self.das[source].attrs and self.das[source].attrs['signal'] == 1:
+                target = "/".join((nxdata.name,"y"))
+                h5nexus.link(self.das[source], target)
+                break
+        
+        # identify default x-axis
+        target = "/".join((nxdata.name,"x"))
+        source = self.scan_axis(state)
+        h5nexus.link(self.das[source], target)
 
     def scan_axis(self, state):
         try: return self._cached_scan_axis
@@ -488,13 +502,14 @@ class Scan(object):
                 else:
                     scanID = 'counts.startTime'
         deviceID,fieldID = scanID.split('.',1)
-        if deviceID == 'counts':
-            scanID = fieldID
+        #if deviceID == 'counts':
+        #    scanID = fieldID
         #elif state.devices[deviceID].get('primary',None) == fieldID:
         #    scanID = deviceID
-        else:
-            scanID = scanID.replace('.','/')
-        return scanID
+        #else:
+        #    scanID = scanID.replace('.','/')
+        
+        return scanID.replace('.','/')
         
     def normalization_node(self, state):
         """
