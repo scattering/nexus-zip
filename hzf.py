@@ -85,7 +85,7 @@ class Node(object):
                 return Group(self, full_path)
             elif os.path.exists(os_path + ".link"):
                 # it's a link
-                return FieldLink(self, full_path)
+                return resolveLink(self, os_path + ".link")
             else:
                 # it's a field
                 return FieldFile(self, full_path)
@@ -155,7 +155,9 @@ class File(Node):
         
     
 class Group(Node):
-    def __init__(self, node, path, nxclass="NXCollection", attrs={}):
+    def __init__(self, node, path, nxclass="NXCollection", attrs=None):
+        if attrs is None:
+            attrs = {}
         Node.__init__(self, parent_node=node, path=path)
         if path.startswith("/"):
             # absolute path
@@ -423,7 +425,7 @@ class FieldLink(FieldFile):
         self.os_path = node.os_path
         orig_attrs_path = path + ".link"
         self.orig_attrs = JSONBackedDict(os.path.join(self.os_path, orig_attrs_path.lstrip("/")))
-                
+
         if 'target' in self.orig_attrs:
             target_path = self.orig_attrs['target']
         else:
@@ -441,6 +443,55 @@ class FieldLink(FieldFile):
     @property
     def name(self):
         return self.orig_path
+        
+class GroupLink(Group):
+    def __init__(self, node, path, target_path=None, **kw):
+        if not path.startswith("/"):
+            path = os.path.join(node.path, path)
+        self.orig_path = path
+        self.os_path = node.os_path
+        orig_attrs_path = path + ".link"
+        self.orig_attrs = JSONBackedDict(os.path.join(self.os_path, orig_attrs_path.lstrip("/")))
+
+        if 'target' in self.orig_attrs:
+            target_path = self.orig_attrs['target']
+        else:
+            self.orig_attrs['target'] = target_path
+        
+        Group.__init__(self, node, target_path)
+        preexisting = os.path.exists(os.path.join(self.os_path, self.orig_path.lstrip("/")))
+        if preexisting:
+            pass
+        else:
+            builtin_open(os.path.join(self.os_path, self.orig_path.lstrip("/")), "w").write("soft link: see .link file for target")
+            
+        self.attrs = StaticDictWrapper(self.attrs, self.orig_attrs)
+      
+    @property
+    def name(self):
+        return self.orig_path
+
+def resolveLink(node, full_path):
+    linkinfo = JSONBackedDict(full_path)
+    target_path = linkinfo['target']
+    return node[target_path]    
+        
+def make_link(node, path):
+    if not path.startswith("/"):
+        path = os.path.join(node.path, path)
+    orig_path = path
+    os_path = node.os_path
+    orig_attrs_path = path + ".link"
+    orig_attrs = JSONBackedDict(os.path.join(os_path, orig_attrs_path.lstrip("/")))
+    orig_attrs['target'] = node.path
+        
+    preexisting = os.path.exists(os.path.join(os_path, orig_path.lstrip("/")))
+    if not preexisting:
+        builtin_open(os.path.join(os_path, orig_path.lstrip("/")), "w").write("soft link: see .link file for target")
+            
+
+
+
         
 import collections
 from itertools import chain
@@ -510,11 +561,7 @@ def isLink(full_path):
     return os.path.exists(full_path + '.link')
 
 def link(node, link):
-    try:
-        FieldLink(node, link, node.path)
-    except:
-        annotate_exception("when linking %s to %s"%(link, node.name))
-        raise
+    make_link(node, link)
 
 def update_hard_links(*args, **kw):
     pass

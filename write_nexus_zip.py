@@ -128,7 +128,6 @@ class Writer(BaseWriter):
         self.active_scan_handle = self.scans[self.active_scan]
 
     def end(self, state):
-        print ("processing end", self.reported_paths)
         for scan in self.scans:
             self.scans[scan].close(state, self.zipped)
         for path in self.reported_paths:
@@ -450,7 +449,7 @@ class Scan(object):
                     for deviceID,device in state.devices.items()
                     if device['type'] == 'logical_counter']
         nodes = state.data['trajectory.scannedVariables']
-        nodes.extend(state.primary_sensors())
+        #nodes.extend(state.primary_sensors())
         nodes.extend(counters)
         
         # add all columns to the NXdata block, exclude duplicates
@@ -1080,13 +1079,14 @@ def build_static_field(path, name, conf):
                 label=label, attrs=attrs)
 
 def make_links(entry, links):
-    for target_path,link_path in links:        
-        #print "linking",sourcepath,target
+    for target_path,link_path in links:
         try:
             target = entry[target_path]
         except KeyError:
-            # ignore missing links
             continue
+        
+                
+        #print "linking",sourcepath,target
         h5nexus.link(target,link_path)
 
 def _isstr(s): return isinstance(s, str)
