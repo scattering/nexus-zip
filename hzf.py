@@ -17,8 +17,9 @@ builtin_open = __builtins__['open']
 class Node(object):
     _attrs_filename = ".attrs"
     
-    def __init__(self, parent_node=None, path="/", nxclass=None, attrs={}):
+    def __init__(self, parent_node=None, path="/", nxclass=None, attrs={}, json_encoder=None):
         self.root_node = self if parent_node is None else parent_node.root_node
+        self.json_encoder = json_encoder
         if path.startswith("/"):
             # absolute path
             self.path = path
@@ -106,8 +107,8 @@ class File(Node):
             self.os_path = fn
         else:
             self.os_path = os_path
-        Node.__init__(self, parent_node=None, path="/")        
-        self.attrs = JSONBackedDict(os.path.join(self.os_path, self._attrs_filename))
+        Node.__init__(self, parent_node=None, path="/", **kw)        
+        self.attrs = JSONBackedDict(os.path.join(self.os_path, self._attrs_filename), self.json_encoder)
         self.filename = filename
         self.mode = mode
         self.compression = compression
@@ -155,10 +156,10 @@ class File(Node):
         
     
 class Group(Node):
-    def __init__(self, node, path, nxclass="NXCollection", attrs=None):
+    def __init__(self, node, path, nxclass="NXCollection", attrs=None, **kw):
         if attrs is None:
             attrs = {}
-        Node.__init__(self, parent_node=node, path=path)
+        Node.__init__(self, parent_node=node, path=path, **kw)
         if path.startswith("/"):
             # absolute path
             self.path = path
@@ -173,7 +174,7 @@ class Group(Node):
             os.mkdir(os.path.join(self.os_path, self.path.lstrip("/")))
             attrs['NX_class'] = nxclass.encode('UTF-8')
         
-        self.attrs = JSONBackedDict(os.path.join(self.os_path, self.path.lstrip("/"), self._attrs_filename))
+        self.attrs = JSONBackedDict(os.path.join(self.os_path, self.path.lstrip("/"), self._attrs_filename), self.json_encoder)
         self.attrs.update(attrs)
         self.attrs._write()
         
@@ -301,6 +302,7 @@ class FieldFile(object):
             attrs.setdefault('label', kw.setdefault('label', None))
             attrs.setdefault('binary', kw.setdefault('binary', False))
             attrs['byteorder'] = sys.byteorder
+            self.attrs.encoder = kw.setdefault('encoder', None)
             if attrs['dtype'] is None:
                 raise TypeError("dtype missing when creating %s" % (path,))
             self.attrs.clear()
@@ -476,14 +478,16 @@ def resolveLink(node, full_path):
     target_path = linkinfo['target']
     return node[target_path]    
         
-def make_link(node, path):
+def make_link(node, path, target_path=None):
+    if target_path is None: 
+        target_path = node.path
     if not path.startswith("/"):
-        path = os.path.join(node.path, path)
+        path = os.path.join(target_path, path)
     orig_path = path
     os_path = node.os_path
     orig_attrs_path = path + ".link"
     orig_attrs = JSONBackedDict(os.path.join(os_path, orig_attrs_path.lstrip("/")))
-    orig_attrs['target'] = node.path
+    orig_attrs['target'] = target_path
         
     preexisting = os.path.exists(os.path.join(os_path, orig_path.lstrip("/")))
     if not preexisting:
@@ -607,7 +611,42 @@ def extend(node, data):
     
 def append(node, data):
     node.append(data)
+
+def h5toZip(h5file):
+    new_filename = h5file.filename.replace("nxs", "nxz")
+    hz = File(new_filename, "w")
+    h5itemsCopy(h5file, hz)
+    return hz
     
+def h5itemsCopy(h5node, hz):
+    import h5py
+    import json
+    import numpy
+    class MyEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, numpy.integer):
+                    return int(obj)
+            elif isinstance(obj, numpy.floating):
+                    return float(obj)
+            elif isinstance(obj, numpy.ndarray):
+                    return obj.tolist()
+            else:
+                    return super(MyEncoder, self).default(obj)
+    
+    for item_name, item in h5node.items():
+        if 'target' in item.attrs and item.attrs['target'] != item.name:
+            # then it's a link...
+            make_link(hz, item.name, target_path=item.attrs['target'])
+        elif isinstance(item, h5py.Group):
+            Group(hz, item.name, attrs=dict(item.attrs))
+            h5itemsCopy(item, hz)
+        else:
+            attrs = dict(item.attrs)
+            value = item.value
+            dtype = str(value.dtype)
+            FieldFile(hz, item.name, dtype=dtype, attrs=attrs, data=item.value, encoder=MyEncoder)
+
+  
 """
 if os.path.islink(fullPath):
     # http://www.mail-archive.com/python-list@python.org/msg34223.html

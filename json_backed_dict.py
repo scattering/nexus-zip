@@ -5,9 +5,10 @@ class JSONBackedDict(dict):
     inherits from dict but only supports bare init (can not populate dict at init)
     rewrites the json backing with every setitem
     """
-    def __init__(self, filename=""):
+    def __init__(self, filename="", encoder=None):
         dict.__init__(self)
         self.filename = filename
+        self.encoder = encoder
         if os.path.exists(self.filename):
             self._read()
         else:
@@ -17,7 +18,7 @@ class JSONBackedDict(dict):
         fd_out, fd_out_name = tempfile.mkstemp()
         fd_in_name = self.filename
         with os.fdopen(fd_out, "w") as outfile:
-            outfile.write(json.dumps(self))
+            outfile.write(json.dumps(self, cls=self.encoder))
         # then rename the temporary file to the backing file name...
         shutil.move(fd_out_name, fd_in_name)
     
