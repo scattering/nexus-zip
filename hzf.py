@@ -386,10 +386,9 @@ class FieldFile(object):
             with builtin_open(target, mode) as outfile:
                 if data.dtype.kind == 'S':
                     # escape carriage returns and tabs
-                    vrep = numpy.vectorize(str.replace)
-                    vrep(data, '\t', r'\t')
-                    vrep(data, '\r', r'\r')
-                    vrep(data, '\n', r'\n')
+                    data = numpy.char.replace(data, '\t', r'\t')
+                    data = numpy.char.replace(data, '\r', r'\r')
+                    data = numpy.char.replace(data, '\n', r'\n')
                 numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
                 
     def append(self, data, coerce_dtype=True):
