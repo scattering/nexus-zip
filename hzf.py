@@ -383,7 +383,13 @@ class FieldFile(object):
             with builtin_open(target, mode + "b") as outfile:                           
                 data.tofile(outfile)
         else:            
-            with builtin_open(target, mode) as outfile:       
+            with builtin_open(target, mode) as outfile:
+                if data.dtype.kind == 'S':
+                    # escape carriage returns and tabs
+                    vrep = numpy.vectorize(str.replace)
+                    vrep(data, '\t', r'\t')
+                    vrep(data, '\r', r'\r')
+                    vrep(data, '\n', r'\n')
                 numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
                 
     def append(self, data, coerce_dtype=True):
