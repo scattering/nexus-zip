@@ -448,9 +448,9 @@ class Scan(object):
         counters = [".".join((deviceID,'counts'))
                     for deviceID,device in state.devices.items()
                     if device['type'] == 'logical_counter']
-        nodes = state.data['trajectory.scannedVariables']
+        nodes = state.data[util.CONTROL_VARIABLES]
         #nodes.extend(state.primary_sensors())
-        nodes.extend(counters)
+        nodes.extend(counters) 
         
         # add all columns to the NXdata block, exclude duplicates
         for nodeID in sorted(set(nodes)):
@@ -476,7 +476,7 @@ class Scan(object):
         target = "/".join((nxdata.name,"x"))
         source = self.scan_axis(state)
         h5nexus.link(self.das[source], target)
-
+            
     def scan_axis(self, state):
         try: return self._cached_scan_axis
         except AttributeError: pass
@@ -489,17 +489,14 @@ class Scan(object):
         return self._cached_scan_axis
             
     def _guess_scan_axis(self, state):
-        scanID = state.data.get('trajectory.defaultXAxisPlotNode', '')
+        scanID = state.data.get('trajectoryData.xAxis', '')
         if not scanID:
-            scanVars = state.data.get('trajectory.scannedVariables', '')
-            if scanVars:
-                scanID = scanVars[0]
-            else:
-                controlVars = state.data.get('trajectory.controlVariables', '')
-                if controlVars:
-                    scanID = controlVars[0]
-                else:
-                    scanID = 'counts.startTime'
+            scanID = state.data.get('trajectory.defaultXAxisPlotNode', '')
+        if not scanID:
+            scanVars = state.data.get(util.CONTROL_VARIABLES, None)
+            if scanVars is None:
+                scanVars = state.data.get(util.SCAN_VARIABLES, None)
+            scanID = scanVars[0] if scanVars is not None else 'counts.startTime'
         deviceID,fieldID = scanID.split('.',1)
         #if deviceID == 'counts':
         #    scanID = fieldID
