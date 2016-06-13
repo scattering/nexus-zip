@@ -385,10 +385,11 @@ class FieldFile(object):
         else:            
             with builtin_open(target, mode) as outfile:
                 if data.dtype.kind == 'S':
+                    kind = data.dtype.kind
                     # escape carriage returns and tabs
-                    data = numpy.char.replace(data, '\t', r'\t')
-                    data = numpy.char.replace(data, '\r', r'\r')
-                    data = numpy.char.replace(data, '\n', r'\n')
+                    data = numpy.char.replace(data, '\t', r'\t').astype(kind)
+                    data = numpy.char.replace(data, '\r', r'\r').astype(kind)
+                    data = numpy.char.replace(data, '\n', r'\n').astype(kind)
                 numpy.savetxt(outfile, data, delimiter='\t', fmt=self._formats[data.dtype.kind])
                 
     def append(self, data, coerce_dtype=True):
